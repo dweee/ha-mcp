@@ -33,9 +33,13 @@ def wildcard_listen_sockets(host: str, port: int) -> list[_ListenSocket] | None:
         return None
     sockets: list[_ListenSocket] = []
     try:
-        for family, kind, proto, _name, address in socket.getaddrinfo(
+        addresses = socket.getaddrinfo(
             None, port, socket.AF_UNSPEC, socket.SOCK_STREAM, 0, socket.AI_PASSIVE
-        ):
+        )
+        # The IPv6-busy fallback requires an already-bound IPv4 listener.
+        # Resolver order is platform-dependent.
+        addresses.sort(key=lambda address: address[0] != socket.AF_INET)
+        for family, kind, proto, _name, address in addresses:
             try:
                 sock = _ListenSocket(family, kind, proto)
             except OSError:
