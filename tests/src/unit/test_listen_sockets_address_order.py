@@ -42,6 +42,18 @@ class ListenSocketAddressOrderTests(unittest.TestCase):
                 self.assertEqual(raised.exception.errno, errno.EADDRINUSE)
 
     def test_busy_ipv6_keeps_ipv4_with_either_resolver_order(self):
+        try:
+            with socket.socket(socket.AF_INET6, socket.SOCK_STREAM) as probe:
+                probe.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
+                probe.bind(("::", 0))
+        except OSError as error:
+            if error.errno in (
+                errno.EAFNOSUPPORT,
+                errno.EPROTONOSUPPORT,
+                errno.EADDRNOTAVAIL,
+            ):
+                self.skipTest(f"IPv6 wildcard unavailable: {error}")
+            raise
         getaddrinfo = socket.getaddrinfo
         for first_family in (socket.AF_INET, socket.AF_INET6):
             with self.subTest(first_family=first_family):
