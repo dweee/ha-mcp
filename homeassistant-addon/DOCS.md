@@ -430,7 +430,7 @@ In a require-approval list, a sub-condition also holds when one item of a list a
 
 **Allow list.** By default a matching rule requires approval and every other call runs. Setting **Approval mode** to **Require approval unless a rule matches (allow list)** reverses that: the rules list the calls that run without approval, and every other call, reads included, needs approval. Only tool search and managing pending approvals stay exempt. An allow list matches strictly, so neither a case variant nor one listed value among unlisted ones can ride an approval: a condition must hold with exact case, for every value a wildcard path (`args.operations.*.entity_id`) or a list argument reaches, every branch of a wildcard path must hold the field (so a batch operation without it, or an argument that lacks it, needs approval; a plain value such as the `domain` string lacks every field, so `args.*.entity_id` approves no `ha_call_service` call that can run), and an object argument matches only by equals or is one of. Regex and contains still match substrings, so anchor a regex with `^…$`, and does NOT equal / is NOT one of approve everything they do not name. A string value at a condition's path that contains a comma or has leading or trailing whitespace matches no condition except is present, whatever the argument, because Home Assistant splits and strips entity IDs given that way. Approvals given under an allow list are never remembered: each one covers a single call. A rule constrains only the arguments it names, so an approval for `entity_id` equals `lock.shed` also covers a call that adds `area_id` or another target argument. To approve one exact call, match the whole argument object instead: path `args`, is one of, and a list of the approved argument objects.
 
-**Matching object keys.** A path ending in `*~` reaches the keys of an object argument instead of its values. A scene names the entities it sets as keys (`{"lock.front_door": "unlocked"}`), so for `ha_config_set_scene` the path `args.config.entities.*~` with regex `^(lock|siren|alarm_control_panel)\.` gates every scene that includes one of them, where `args.config.entities.*` would only reach the target states. Under an allow list every key must satisfy the condition, and an empty or missing `entities` needs approval. `*~` must be the last segment of a path. Such a rule covers only scene definitions written through `ha_config_set_scene`: a `python_transform` edit, `activate=True` on an existing scene, and `scene.apply` or `scene.create` through `ha_call_service` each need a rule of their own.
+**Matching object keys.** A path ending in `*~` reaches the keys of an object argument instead of its values. A scene names the entities it sets as keys (`{"lock.front_door": "unlocked"}`), so for `ha_config_set_scene` the path `args.config.entities.*~` with regex `^(lock|siren|alarm_control_panel)\.` gates every scene whose `config` includes one of them, where `args.config.entities.*` would only reach the target states. Under an allow list every key must satisfy the condition, and an empty or missing `entities` needs approval. `*~` must be the last segment of a path. Such a rule covers only scene definitions written through `ha_config_set_scene`'s `config`: a `python_transform` edit, `activate=True` on an existing scene, and `scene.apply` or `scene.create` through `ha_call_service` each need a rule of their own. The entity IDs in `capture_entities` count as keys of `config.entities`, lowercased as Home Assistant stores them; the rule sees those IDs, not the states captured for them. In a require-approval list a condition on those keys also holds when it holds for the arguments as the call gave them; under an allow list it must hold with the captured IDs added. The captured states, the `entity_only` mark the tool adds to `config.metadata` for a captured entity not already in the call's `config.entities`, and the entities of a device in `capture_devices` are read or written only after the check. So in a require-approval list any rule for `ha_config_set_scene` or for every tool (`*`) whose path can reach `config.entities`, `config.metadata` or the keys of `config` requires approval for every call with a non-empty `capture_entities` or `capture_devices`, whatever its other conditions, and under an allow list such a rule never approves one. Two exceptions: with `capture_entities` alone, a path ending at the entity keys (`config.entities.*~` or `*.entities.*~`) is judged with the captured IDs added, as above; and a rule on the whole argument object (path `args`) is judged as written, like any other call.
 
 If you edit `tool_policy.json` by hand, spell every field exactly: an unknown field (a typo such as `rule_efect`) makes the policy fail to load, and every tool call is then refused until the file is fixed.
 
@@ -732,9 +732,9 @@ The add-on provides 87+ MCP tools for controlling Home Assistant:
 - `ha_manage_app` — Manage Home Assistant apps (add-ons) or proxy an app API.
 
 ### Areas & Floors
-- `ha_list_floors_areas` — List floors sorted by level ascending, each with their assigned areas nested, plus areas without a floor.
+- `ha_list_floors_areas` — List floors in the order Home Assistant keeps them, each with their assigned areas nested, plus areas without a floor.
 - `ha_remove_area_or_floor` — Remove a Home Assistant area or floor.
-- `ha_set_area_or_floor` — Create or update a Home Assistant area or floor.
+- `ha_set_area_or_floor` — Create, update or reorder Home Assistant areas or floors.
 
 ### Assist
 - `ha_manage_pipeline` — Manage Home Assistant Assist pipelines.
@@ -753,7 +753,7 @@ The add-on provides 87+ MCP tools for controlling Home Assistant:
 - `ha_config_set_calendar_event` — Create a new event in a calendar, or update an existing one.
 
 ### Camera
-- `ha_get_camera_image` — Get a snapshot image from a Home Assistant camera entity.
+- `ha_get_camera_image` — Get a snapshot image from a Home Assistant camera or image entity.
 
 ### Dashboard
 - `ha_get_dashboard_screenshot` **(beta — dev channel only)** — Get rendered images of a Home Assistant Lovelace dashboard view.
@@ -779,10 +779,9 @@ The add-on provides 87+ MCP tools for controlling Home Assistant:
 - `ha_manage_energy_prefs` — Manage the Home Assistant Energy Dashboard preferences: grid / solar /
 
 ### Entity Registry
-- `ha_get_entity` — Get entity registry information for one or more entities.
-- `ha_get_entity_exposure` — Get entity exposure settings - list all or get settings for a specific entity.
+- `ha_get_entity` — Get entity registry entries, or without an entity the registry settings and exposed entities.
 - `ha_remove_entity` — Remove one or more entities from the Home Assistant entity registry.
-- `ha_set_entity` — Update entity properties in the entity registry.
+- `ha_set_entity` — Update entity registry entries, or without entity_id the registry-wide settings.
 
 ### Files
 - `ha_delete_file` **(beta — dev channel only)** — Delete a file from allowed directories in the Home Assistant config.
@@ -796,8 +795,8 @@ The add-on provides 87+ MCP tools for controlling Home Assistant:
 - `ha_config_set_group` — Create or update a service-based Home Assistant entity group via the group.set service.
 
 ### HACS
-- `ha_get_hacs_info` — Get HACS (Home Assistant Community Store) data — search the store or fetch repository details.
-- `ha_manage_hacs` — Manage HACS (Home Assistant Community Store) — install/update, remove, add custom repositories, or refresh repository information.
+- `ha_get_hacs_info` — Get data from Home Assistant's Marketplace, what HACS became in 2026.11.
+- `ha_manage_hacs` — Manage Home Assistant's Marketplace (what HACS became in 2026.11): install, update, remove and add repositories.
 
 ### Helper Entities
 - `ha_config_list_helpers` — List Home Assistant helpers of a specific type with their configurations.
@@ -808,10 +807,11 @@ The add-on provides 87+ MCP tools for controlling Home Assistant:
 - `ha_get_automation_traces` — Get execution traces for automations and scripts to debug issues.
 - `ha_get_history` — Get historical data from Home Assistant's recorder.
 - `ha_get_logs` — Get Home Assistant logs from various sources.
+- `ha_manage_logs` — Manage Home Assistant's recorder, its long-term statistics and its logs.
 
 ### Integrations
 - `ha_get_integration` — Get integration (config entry) information with pagination.
-- `ha_get_system_health` — Get Home Assistant system health, including Zigbee (ZHA), Z-Wave JS, and per-integration diagnostics dumps.
+- `ha_get_system_health` — Get Home Assistant system health, including Zigbee (ZHA), Z-Wave JS, Thread and Matter networks.
 - `ha_set_integration` — Manage an integration (config entry): enable/disable, add, update options, reconfigure, or send its own commands.
 
 ### Labels & Categories

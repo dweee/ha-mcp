@@ -15,9 +15,11 @@ from .. import (
     flow_outline,
     flow_record,
     helper_collections,
+    recorder_status,
+    scene_editor,
     todo_items,
 )
-from ..const import MAX_OAUTH_CALLBACK_LENGTH, MAX_OAUTH_CALLBACKS
+from ..oauth_redirect_allowlist import MAX_OAUTH_CALLBACK_LENGTH, MAX_OAUTH_CALLBACKS
 from . import logbook as _logbook
 from . import trace_context as _trace_context
 
@@ -70,6 +72,7 @@ __all__ = [
     "WS_OVERVIEW",
     "WS_REFERENCE_DATA",
     "WS_REGISTRIES",
+    "WS_REGISTRY_FIELDS",
     "WS_REGISTRY_LOOKUP",
     "WS_SEARCH",
     "WS_SERVER_ENTRY",
@@ -99,6 +102,7 @@ WS_REGISTRY_LOOKUP = f"{WS_API_PREFIX}/registry_lookup"
 WS_SYSTEM_SNAPSHOT = f"{WS_API_PREFIX}/system_snapshot"
 WS_ENTITY_LOOKUP = f"{WS_API_PREFIX}/entity_lookup"
 WS_REGISTRIES = f"{WS_API_PREFIX}/registries"
+WS_REGISTRY_FIELDS = f"{WS_API_PREFIX}/registry_fields"
 WS_DASHBOARDS = f"{WS_API_PREFIX}/dashboards"
 WS_DASHBOARD_EDIT = f"{WS_API_PREFIX}/dashboard_edit"
 WS_SERVICES_LIST = f"{WS_API_PREFIX}/services_list"
@@ -156,6 +160,9 @@ CAPABILITIES: list[str] = [
     # unless this flag accompanies the individual command capability.
     "device_registry_child_semantics",
     "entity_enrich",
+    # A flag on entity_enrich: each entity carries ``full_name``, the name Core
+    # composes, as the overview's ``full_name``.
+    "entity_enrich_full_name",
     "exposure",
     "config_entries",
     # A flag on config_entries: gates its opt-in ``include_subentry_data``, the
@@ -168,6 +175,7 @@ CAPABILITIES: list[str] = [
     "system_snapshot",
     "entity_lookup",
     "registries",
+    "registry_fields",
     "dashboards",
     "dashboard_edit",
     # A flag, not a standalone command: gates the additive whole-document
@@ -232,8 +240,10 @@ CAPABILITIES: list[str] = [
     todo_items.CAPABILITY,
     flow_record.CAPABILITY,
     flow_outline.CAPABILITY,
+    scene_editor.CAPABILITY,
     automation_config.CAPABILITY,
     config_references.CAPABILITY,
+    recorder_status.CAPABILITY,
     *card_definitions.CAPABILITIES,
 ]
 
@@ -267,7 +277,7 @@ CALL_SERVICE_MAX_TIMEOUT = 60.0
 # Delay before ``server_entry_update``'s deferred ``async_update_entry`` fires, so
 # the WS ``{scheduled: True}`` response flushes to the calling (embedded) server
 # BEFORE the resulting entry reload tears that server's thread down. Mirrors the
-# server side's ``tools_dev._SELF_ACTION_FLUSH_DELAY_S`` (its legacy options-flow
+# server side's ``tools_dev.SELF_ACTION_FLUSH_DELAY_S`` (its legacy options-flow
 # self-restart uses the same headroom for the ingress/webhook hop).
 SERVER_ENTRY_UPDATE_FLUSH_DELAY_S = 1.0
 
@@ -320,7 +330,7 @@ FLOW_HELPER_DOMAINS = frozenset(FLOWS["helper"])
 # ``<type>/list`` handler sends. ``person/list`` also sends the YAML persons
 # and ``tag/list`` adds registry names, so those two are left OUT of
 # ``covered_types`` and the server lists them with ``person/list`` /
-# ``tag/list``. See :func:`_do_helpers_list`.
+# ``tag/list``. See :func:`do_helpers_list`.
 HELPERS_LIST_COLLECTION_DOMAINS = COLLECTION_HELPER_DOMAINS | frozenset({"zone"})
 
 # Every ``EntityComponent`` self-registers here (core's

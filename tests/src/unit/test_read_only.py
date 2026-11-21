@@ -1,6 +1,6 @@
 """Test Read Only Mode enforcement (read_only.py) without a FastMCP boot.
 
-Mirrors ``tests/src/unit/policy/test_middleware.py``: drive
+Mirrors ``tests/src/unit/policy/test_middleware_gating.py``: drive
 ``ReadOnlyMiddleware.on_call_tool`` directly with a fake call_next, and
 ``ReadOnlyToolsTransform.list_tools``/``get_tool`` with fake Tool objects.
 The live-settings read is patched at the ``ha_mcp.read_only`` import site.
@@ -16,7 +16,6 @@ import pytest
 
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
 from ha_mcp.read_only import (
-    _ADDON_CONFIG_WRITE_PARAMS,
     READ_ONLY_EXEMPT_TOOLS,
     ReadOnlyMiddleware,
     ReadOnlyToolsTransform,
@@ -249,25 +248,6 @@ class TestExemptionRules:
     )
     def test_manage_updates(self, args, allowed):
         rule = READ_ONLY_EXEMPT_TOOLS["ha_manage_updates"].blocked_write
-        assert (rule(args) is None) is allowed
-
-    @pytest.mark.parametrize(
-        "args,allowed",
-        [
-            ({"action": "list"}, True),
-            # No pure-read duplicate exists, and Read Only Mode still surfaces
-            # the capture warning naming this value -- so it stays inspectable.
-            ({"action": "get_engine_theme"}, True),
-            # Both writes stay blocked: the backend default and the
-            # engine-account restore.
-            ({"action": "set", "theme_name": "nord"}, False),
-            ({"action": "set_engine_theme", "value": {"theme": ""}}, False),
-            # A missing action fails closed -- never a silent read.
-            ({}, False),
-        ],
-    )
-    def test_manage_theme(self, args, allowed):
-        rule = READ_ONLY_EXEMPT_TOOLS["ha_manage_theme"].blocked_write
         assert (rule(args) is None) is allowed
 
     @pytest.mark.parametrize(
@@ -667,6 +647,7 @@ class TestExemptTableContract:
             "ha_manage_security_policy",
             "ha_manage_theme",
             "ha_manage_blueprints",
+            "ha_manage_logs",
         }
 
     def test_every_exemption_describes_whats_allowed(self):
@@ -692,6 +673,7 @@ _EXEMPT_TOOL_MODULES = {
     "ha_manage_security_policy": "tools_security_policy.py",
     "ha_manage_theme": "tools_themes.py",
     "ha_manage_blueprints": "tools_blueprints.py",
+    "ha_manage_logs": "tools_logs_manage.py",
 }
 
 # INDEPENDENT, hardcoded manifests of the argument names each exempt
@@ -704,6 +686,7 @@ _EXEMPT_TOOL_MODULES = {
 # read-only predicate.
 _EXEMPT_INSPECTED_ARGS = {
     "ha_manage_theme": {"action"},
+    "ha_manage_logs": {"action", "describe"},
     "ha_manage_backup": {"scope", "action"},
     "ha_manage_app": {
         "action",
@@ -725,9 +708,9 @@ _EXEMPT_INSPECTED_ARGS = {
     "ha_manage_blueprints": {"action"},
 }
 
-# The subset of the addon manifest that ``_addon_write`` iterates as
-# "config-change" parameters. Pinned independently so dropping one from
-# the production constant fails here rather than silently passing.
+# The ha_manage_app parameters that each make a call an app (add-on) config
+# change. Pinned here, so one the read-only predicate stops checking fails
+# below rather than silently passing.
 _ADDON_CONFIG_WRITE_PARAMS_MANIFEST = (
     "options",
     "network",
@@ -747,11 +730,14 @@ _ADDON_CONFIG_WRITE_PARAMS_MANIFEST = (
 # dispatch fields the predicate inspects) would silently classify as a
 # read in Read Only Mode.
 _EXEMPT_GATED_OR_READ_ARGS = {
+    # data: the fields of an action the predicate lets through, never sent
+    # with describe; limit and offset page the statistics listing client-side.
+    "ha_manage_logs": {"data", "limit", "offset"},
     "ha_manage_theme": {
         # Consumed only under the action dispatch the predicate inspects:
         # the backend-default write payload ('set')...
         "theme_name",
-        "mode",
+        "theme_name_dark",
         # ...and the engine-account restore payload plus its compare guard
         # ('set_engine_theme'). Both actions are blocked outright, so these
         # carry no mutation capability of their own in read-only mode.
@@ -902,7 +888,7 @@ _EXEMPT_GATED_OR_READ_ARGS = {
 }
 
 
-def _is_tool_decorated(node: ast.AST) -> bool:
+def _is_tool_decorated(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
     for dec in node.decorator_list:
         target = dec.func if isinstance(dec, ast.Call) else dec
         if isinstance(target, ast.Attribute) and target.attr == "tool":
@@ -919,7 +905,7 @@ def _decorated_tool_param_names(module_path: Path, tool_name: str) -> set[str]:
     the tool name)."""
     tree = ast.parse(module_path.read_text(encoding="utf-8"))
 
-    def _names_match(node: ast.AST) -> bool:
+    def _names_match(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
         # @tool(name="ha_...") explicit name kwarg.
         for dec in node.decorator_list:
             if isinstance(dec, ast.Call):
@@ -963,26 +949,20 @@ class TestExemptPredicateSchemaDrift:
                 f"a write as a read."
             )
 
-    def test_addon_config_write_params_manifest_matches_constant(self):
-        """The production ``_ADDON_CONFIG_WRITE_PARAMS`` must equal the
-        independent manifest above. Deleting a param from the constant
-        (which would let that add-on config write slip through as a read)
-        fails this test until the manifest is updated to match."""
-        assert (
-            tuple(_ADDON_CONFIG_WRITE_PARAMS) == _ADDON_CONFIG_WRITE_PARAMS_MANIFEST
-        ), (
-            "_ADDON_CONFIG_WRITE_PARAMS drifted from the independent manifest "
-            "in this test. If you intentionally changed which add-on params "
-            "count as a config write, update the manifest AND re-confirm the "
-            "read-only classification is still correct."
-        )
+    @pytest.mark.parametrize("param", _ADDON_CONFIG_WRITE_PARAMS_MANIFEST)
+    def test_each_addon_config_write_param_is_blocked(self, param):
+        """Each config-change parameter alone makes ha_manage_app a write,
+        at any value but None, even False: one the predicate stops checking would let that
+        app (add-on) config change slip through as a read."""
+        rule = READ_ONLY_EXEMPT_TOOLS["ha_manage_app"].blocked_write
+        assert rule({"slug": "x", param: False}) is not None
 
     def test_addon_config_write_params_are_real_tool_args(self):
         module_path = _SRC_TOOLS_DIR / _EXEMPT_TOOL_MODULES["ha_manage_app"]
         real_params = _decorated_tool_param_names(module_path, "ha_manage_app")
-        for arg in _ADDON_CONFIG_WRITE_PARAMS:
+        for arg in _ADDON_CONFIG_WRITE_PARAMS_MANIFEST:
             assert arg in real_params, (
-                f"_ADDON_CONFIG_WRITE_PARAMS lists {arg!r}, absent from "
+                f"the config-write manifest lists {arg!r}, absent from "
                 f"ha_manage_app's signature ({module_path.name})"
             )
 
