@@ -1,0 +1,44 @@
+{
+  "version": 1,
+  "upstream": "homeassistant-ai/ha-mcp",
+  "branch": "master",
+  "track": "branch",
+  "author": {
+    "name": "dave",
+    "email": "git@d.monke.fail"
+  },
+  "required_paths": [
+    "flake.nix",
+    "flake.lock"
+  ],
+  "protected_paths": [
+    "flake.nix",
+    "flake.lock",
+    "nix/**",
+    "ci/**"
+  ],
+  "matrix": [
+    {
+      "system": "x86_64-linux",
+      "packages": [
+        "sync-source"
+      ],
+      "checks": [],
+      "tests": [
+        [
+          "nix",
+          "shell",
+          "--inputs-from",
+          ".",
+          "nixpkgs#uv",
+          "-c",
+          "uv",
+          "run",
+          "--frozen",
+          "pytest",
+          "tests/src/unit/test_listen_sockets.py"
+        ]
+      ]
+    }
+  ]
+}
