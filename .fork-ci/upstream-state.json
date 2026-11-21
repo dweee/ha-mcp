@@ -1,6 +1,6 @@
 {
-  "version": 1,
-  "upstream": "homeassistant-ai/ha-mcp",
+  "branch": "10a1eb1c3387b3991b78c623c6cb07270d759fe4",
   "track": "branch",
-  "branch": "6ae283bde02464cb4ae39cfcf7b55b64201ed9a8"
+  "upstream": "homeassistant-ai/ha-mcp",
+  "version": 1
 }
