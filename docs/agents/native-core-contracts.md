@@ -19,16 +19,38 @@ migrated, so those changes would be thrown away when it is reworked. Fix a bug
 in such a tool by migrating the affected path to the native approach this
 document describes, not by patching it so it keeps working the old way.
 
+This document holds the rules for building tools, not each tool's contract.
+The tool-specific passages already here are worked examples of those rules.
+A migration does not add a section for its own tool: the tool's contract lives
+in its code, its `Field` texts and its tests, and a copy here only duplicates
+them. Add a rule here only when later migrations need it, written as a general
+rule rather than as one tool's behaviour.
+
+## Decide on the code, not the wording
+
+Route an error on its code, HTTP status or exception type, never on its
+wording. Core, the Supervisor and the frontend reword messages between
+releases, and a branch on the wording then stops firing without failing
+anything. Pass the native code and message through to the caller, and add
+suggestions on top of them.
+
+Where the sender gives one code to several causes and nothing else tells them
+apart, the wording test goes in `error_wording.py` (one in `src/ha_mcp`, one in
+the component), under a comment naming the source that sends the text. `scripts/error_wording.py`
+fails Fast Checks on a wording test anywhere else and has no list.
+
 ## Choose the authoritative path
 
-The component is part of the native contract, not an exception to it. The
-`ha_mcp_tools` component runs inside Core, so a path through it reaches Core's
-own registries, schemas, collections, flows and processors directly, the way
-`ha_search` and the logbook read do. Prefer that path whenever the component
-gives in-process access to the Core object a tool wraps. Gate the choice on
-the component's `capabilities` handshake, and update the component producer,
-server consumer, capability gate and any fallback in the same pull request, on
-both component entry topologies.
+The `ha_mcp_tools` component runs inside Core and gives tools such as
+`ha_search` direct access to its registries, schemas, collections, flows and
+processors. Prefer the component when in-process access adds a capability,
+preserves Core behaviour the public API cannot express, or removes a copy of
+Core logic. Use Core's REST or WebSocket endpoint directly when it already
+provides the same behaviour and a new bridge would only relay the response.
+
+Gate component bridges on the component's `capabilities` handshake. Update
+the component producer, server consumer, capability gate and any fallback in
+the same pull request, on both component entry topologies.
 
 What a tool already does without the component keeps working when the tool
 changes: its REST/WebSocket path stays as the fallback. That fallback may grow
@@ -63,7 +85,10 @@ translate Core's validator into another handwritten validator, and do not keep
 one because the WebSocket API cannot express what Core accepts: that is exactly
 the case the component exists for. "It works without the component" does not
 justify the copy; an installation without the component may get less, and the
-fallback says so.
+fallback says so. A fallback that says what it could not judge is finished: do
+not refine it case by case (more fields compared, more of what it missed
+named). Bringing the fallback up to the component case by case is the churn
+the component exists to end.
 
 Component and server releases are paired: every release stamps both with one
 version and the component pins the server build it runs. A bridge and its

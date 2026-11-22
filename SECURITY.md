@@ -171,7 +171,9 @@ values.
 
 `ha_get_skill_guide` and `ha_search_tools` are never scanned: they return
 bundled docs and tool schemas, whose examples can name an entity_id that is also
-hidden. The developer-mode `ha_dev_*` tools are not scanned either: developer
+hidden. The same bundled text attached to a write tool's result (the
+best-practices guide and the checker's warnings) is not scanned either; the
+rest of that result is. The developer-mode `ha_dev_*` tools are not scanned either: developer
 mode is a development and testing override that can change settings and replace
 the running server, and its reads (a stored security-policy rule, for example)
 can return a hidden entity_id.
@@ -186,14 +188,22 @@ all other calls fail closed.
 
 This is a strong barrier against an agent *incidentally* surfacing a hidden
 entity, not a cryptographic guarantee: enforcement scans for the hidden
-entity_id, so a Jinja template or sandbox-adjacent computation that *derives* a
-hidden entity's state without naming its entity_id cannot be caught. On enforced
+entity_id and for the hidden entity's friendly name, so a Jinja template or
+sandbox-adjacent computation that *derives* a hidden entity's state without
+naming its entity_id or its name cannot be caught. The name scan has two gaps
+of its own. A name of a single word is not scanned for. A name does not count
+where it is, or is part of, a visible entity's, a device's or an area's name:
+a hidden entity named exactly like its device, the default for a device's main
+entity such as a lock without an entity name of its own, is therefore returned
+by name with its state. Give such an entity a name of its own to have the name
+scanned for. On enforced
 scannable paths, a matching hidden entity's data is not returned. Existence
 concealment is best-effort: per-tool not-found shapes vary, so a prober comparing
-errors may infer that an id is hidden rather than absent. The boundary covers
-Home Assistant entity data, not physical-world imagery: a visible camera stays
-readable (`ha_get_camera_image`) and could incidentally show a display that
-renders a hidden entity's state — hide that camera when its view is sensitive.
+errors may infer that an id is hidden rather than absent. Enforcement checks the entity requested by
+`ha_get_camera_image`. Pixels from a visible camera or image entity stay
+readable. A camera can show a sensitive display, and an image entity can render
+another entity's data directly in a chart, map, or template image. Hide the
+camera or image entity itself when its output is sensitive.
 Enforce mode is not a defense against an adversarial prompt author deliberately
 trying to exfiltrate a hidden entity's state, nor a substitute for Home
 Assistant's permission model; restrict what the configured token can reach in
@@ -454,6 +464,13 @@ this app's — including the static `client_id`/`client_secret` as the sole
 boundary, admin-equivalent access, self-issued HMAC bearers, and revocation by
 credential rotation plus a restart. Only one of the two may own the root
 `/authorize` and `/token` routes per Home Assistant instance.
+
+With OAuth off, the app's anonymous auto-approve endpoint redirects only to a
+callback on the allowlist set in the app's options, with the same matching
+rules as the in-process `none` mode above; **Allow any OAuth callback URL**
+turns the list off. This holds from dev-channel version 3.0.6.dev3 and the
+stable release that promotes it, after Home Assistant is restarted; earlier
+versions redirect to any spec-valid callback.
 
 ## Scope
 

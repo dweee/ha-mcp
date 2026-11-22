@@ -15,17 +15,43 @@ import httpx
 from .._vendor.websockets.exceptions import WebSocketException
 from .._version import get_supervisor_base_url, is_running_in_addon
 from ..config import get_global_settings
+from ..error_wording import service_call_unauthorized
 from .admin_routes import is_admin_only_route
 from .error_log_journald import (
     JournaldPage,
     container_page,
     first_cursor,
     journald_page,
-    range_header,
 )
+from .exceptions import (
+    HomeAssistantAdminRequiredError as HomeAssistantAdminRequiredError,
+)
+from .exceptions import (
+    HomeAssistantAPIError as HomeAssistantAPIError,
+)
+from .exceptions import (
+    HomeAssistantAuthError as HomeAssistantAuthError,
+)
+from .exceptions import (
+    HomeAssistantCommandError as HomeAssistantCommandError,
+)
+from .exceptions import (
+    HomeAssistantCommandNotSent as HomeAssistantCommandNotSent,
+)
+from .exceptions import (
+    HomeAssistantCommandTimeout as HomeAssistantCommandTimeout,
+)
+from .exceptions import (
+    HomeAssistantConnectionError as HomeAssistantConnectionError,
+)
+from .exceptions import (
+    HomeAssistantError as HomeAssistantError,
+)
+from .exceptions import SceneIdNotAnEntityError
 from .models import ErrorLogPage
+from .service_identifiers import service_rest_path
 from .supervisor_client import make_supervisor_httpx_client
-from .transport_errors import is_ssl_error, redirect_message
+from .transport_errors import is_ssl_error, redirect_refusal
 
 logger = logging.getLogger(__name__)
 
@@ -67,80 +93,15 @@ _ADMIN_ONLY_401_MESSAGE = (
 )
 
 
-class HomeAssistantError(Exception):
-    """Base exception for Home Assistant API errors."""
-
-
-class HomeAssistantConnectionError(HomeAssistantError):
-    """Connection error to Home Assistant."""
-
-
-class HomeAssistantCommandNotSent(HomeAssistantConnectionError):
-    """A WS command that provably never left the process.
-
-    Raised by ``HomeAssistantWebSocketClient.send_command``'s entry guard (socket not
-    authenticated) and by ``send_websocket_message`` when no attempt obtained a client
-    (raised from the acquisition error, so a rejected token survives as ``__cause__``).
-    A subclass of ``HomeAssistantConnectionError``, so broad handlers are unaffected,
-    yet a write consumer can catch it FIRST: the write provably never happened, so a
-    legacy first fire cannot double-apply. Check ``__cause__`` before such a fallback:
-    resending a rejected token over REST adds a 401 toward Home Assistant's IP ban. A
-    ``send_json_message`` failure is NOT this type: ``websocket.send()`` raising does
-    not prove the frame was untransmitted (bytes may already be on the socket when the
-    close surfaces), so send_command re-raises the original exception and the consumer
-    treats it as ambiguous. A post-send socket close (mid-await) likewise raises a plain
-    ``HomeAssistantConnectionError`` (the close handler sets it on the pending future),
-    so type alone distinguishes never-sent from sent-then-dropped/ambiguous.
-    """
-
-
-class HomeAssistantAuthError(HomeAssistantError):
-    """Authentication error with Home Assistant.
-
-    Sibling of ``HomeAssistantAPIError`` (not a subclass). The codebase has
-    18 ``except HomeAssistantAPIError`` sites (ws_waiters polling,
-    tools_integrations registry lookups, etc.) that deliberately rely on
-    auth errors NOT matching so they can propagate to a paired
-    ``except (HomeAssistantConnectionError, HomeAssistantAuthError): raise``
-    block. Subclassing AuthError under APIError silently swallowed those
-    auth errors as part of the local "this entity is not registered yet"
-    polling logic. Sites that specifically need to catch both must list
-    them explicitly (see ``_get_supervisor_log`` and
-    ``_get_system_service_log`` in ``log_sources_supervisor.py``).
-    """
-
-
-class HomeAssistantAdminRequiredError(HomeAssistantAuthError):
-    """An admin-only request refused because the token's user is not an admin.
-
-    A REST request is refused locally, never sent: Home Assistant would answer
-    401 and count it toward its IP ban (#2546). A service call is refused by
-    Home Assistant over WebSocket, where a refusal is not counted.
-    """
-
-
-class HomeAssistantAPIError(HomeAssistantError):
-    """API error from Home Assistant."""
-
-    def __init__(
-        self,
-        message: str,
-        status_code: int | None = None,
-        response_data: dict[str, Any] | None = None,
-    ):
-        super().__init__(message)
-        self.status_code = status_code
-        self.response_data = response_data
-
-
 @dataclass(frozen=True)
 class SceneResolution:
     """Outcome of resolving a scene identifier via the entity registry.
 
-    ``registry_hit`` records whether ``config/entity_registry/get`` returned a
-    usable ``unique_id`` - i.e. the entity actually EXISTS. It is the signal that
-    separates a genuinely-missing scene from one that exists but is not editable
-    through HA's scene config API (a Hue/vendor scene, or a raw-YAML scene): both
+    ``registry_hit`` records whether the storage key came from the registry entry
+    of the scene's own entity - i.e. the entity EXISTS (a bare id that won as a
+    storage key carries False: the registry named another scene). It separates a
+    genuinely-missing scene from one that exists but is not editable through
+    HA's scene config API (a Hue/vendor scene, or a raw-YAML scene): both
     resolve fine yet 404 on ``config/scene/config/{id}``, because that endpoint is
     backed only by the managed ``scenes.yaml`` (issue #1971). ``platform`` carries
     the registry entry's integration domain (``"hue"``, ``"homeassistant"``, …)
@@ -179,43 +140,6 @@ class SceneStorageConfigNotFoundError(HomeAssistantAPIError):
         if storage_key and storage_key != scene_id:
             msg += f" (resolved storage key: {storage_key})"
         super().__init__(msg, status_code=404)
-
-
-class HomeAssistantCommandError(HomeAssistantError):
-    """WebSocket command returned success=False.
-
-    Raised by ``WebSocketClient.send_command`` when Home Assistant responds
-    with ``{type: "result", success: False}``. Used as a type marker in
-    ``_classify_exception``'s match dispatch; classification then falls
-    through to ``_classify_by_message`` for pattern matching on the
-    error message.
-
-    ``code`` carries HA's structured WebSocket error code (the ``code`` field
-    of the response ``error`` object — e.g. ``"unknown_command"``,
-    ``"invalid_format"``) when available, so routing decisions can key off the
-    stable code rather than pattern-matching the human-readable message. It
-    defaults to ``None`` for exceptions raised without a code (older raise
-    sites, string error payloads, or direct construction in tests), which
-    keeps the single-positional-argument constructor backward-compatible.
-    """
-
-    def __init__(self, message: str, code: str | None = None):
-        super().__init__(message)
-        self.code = code
-
-
-class HomeAssistantCommandTimeout(HomeAssistantError):
-    """WebSocket ``send_command`` timed out waiting for HA's response.
-
-    Sibling of ``HomeAssistantCommandError`` (not a subclass) so existing
-    ``except HomeAssistantCommandError`` sites — including the match
-    dispatch in ``helpers._classify_exception`` — keep their original
-    semantics. Callers that specifically want to handle our 30s WS
-    round-trip timeout (e.g. short-lived waiter cleanup that should
-    swallow a timeout instead of masking the real wait result) catch
-    this type directly. Replaces a bare ``Exception("Command timeout")``
-    string-match pattern (#1382 Patch76 review).
-    """
 
 
 # Exception classes that are evidence no answer came back from Home Assistant,
@@ -458,9 +382,7 @@ class HomeAssistantClient:
                     )
 
                 if 300 <= response.status_code < 400:
-                    raise HomeAssistantConnectionError(
-                        redirect_message(self.base_url, response)
-                    )
+                    raise redirect_refusal(self.base_url, response)
 
                 if response.status_code >= 400:
                     message, error_data = self._error_message_from_response(response)
@@ -678,15 +600,13 @@ class HomeAssistantClient:
         data: dict[str, Any] | None = None,
         return_response: bool = False,
     ) -> list[dict[str, Any]] | dict[str, Any]:
-        """
-        Call Home Assistant service.
+        """Call a Home Assistant service.
 
         Args:
             domain: Service domain (e.g., 'light', 'climate')
             service: Service name (e.g., 'turn_on', 'set_temperature')
             data: Optional service data
-            return_response: If True, returns the service response data (for services
-                           that support SupportsResponse.ONLY or SupportsResponse.OPTIONAL)
+            return_response: Request response data from a service that supports it.
 
         Returns:
             Service response data - list of affected states normally, or dict with
@@ -729,7 +649,6 @@ class HomeAssistantClient:
         A 401 means Home Assistant refused before running the service, so the
         WebSocket retry cannot apply it twice.
         """
-        # Build query params for return_response
         params = {}
         if return_response:
             params["return_response"] = "true"
@@ -737,7 +656,7 @@ class HomeAssistantClient:
         try:
             result = await self._request(
                 "POST",
-                f"/services/{domain}/{service}",
+                service_rest_path(domain, service),
                 json=payload,
                 params=params if params else None,
             )
@@ -782,7 +701,7 @@ class HomeAssistantClient:
         )
         if not reply.get("success"):
             error = str(reply.get("error", "Service call failed"))
-            if error.removeprefix("Command failed: ") == "Unauthorized":
+            if service_call_unauthorized(reply.get("error_code"), error):
                 raise HomeAssistantAdminRequiredError(
                     f"Service {domain}.{service} is admin-only in Home Assistant "
                     "and this token's user is not an administrator"
@@ -1138,7 +1057,6 @@ class HomeAssistantClient:
         self,
         path: str,
         lines: int | None = None,
-        offset: int | None = None,
     ) -> str:
         """Fetch ``text/plain`` logs from a Supervisor REST endpoint.
 
@@ -1149,14 +1067,7 @@ class HomeAssistantClient:
           multicast}) for system-service logs
 
         ``lines`` maps to the endpoint's ``?lines=`` journald-window query
-        param; omitted → Supervisor's 100-line default window. Adding
-        ``offset`` switches the same window to a ``Range: entries=`` header
-        (see ``_journald_range_header``), which is the only form that can
-        address an older window. The two forms are mutually exclusive on the
-        wire — Supervisor tests ``if "lines" in request.query`` first and
-        ignores a ``Range`` header whenever that query param is present — so
-        the offset form sends the window in the header and no query param,
-        rather than a pair that could contradict each other.
+        param; omitted → Supervisor's 100-line default window.
 
         Bypasses ``HomeAssistantClient.httpx_client`` because that client targets
         Home Assistant Core through ``http://supervisor/core/api``, while logs
@@ -1186,17 +1097,11 @@ class HomeAssistantClient:
         params: dict[str, Any] = {"no_colors": "true"}
         if lines is not None:
             params["lines"] = lines
-        if offset is not None:
-            # An offset window with no size asked for falls back to the
-            # smallest one the Range syntax can express.
-            size = lines if lines is not None else MIN_LOG_WINDOW_LINES
-            headers["Range"] = range_header(size, offset)
-            params.pop("lines", None)
         logger.debug(
-            "Fetching %s/%s/logs via Supervisor direct (%s)",
+            "Fetching %s/%s/logs via Supervisor direct (lines=%s)",
             get_supervisor_base_url(),
             path,
-            f"range={headers['Range']}" if offset is not None else f"lines={lines}",
+            lines,
         )
         response = await self._supervisor_logs_response(path, headers, params)
         return response.text
@@ -1518,7 +1423,7 @@ class HomeAssistantClient:
     # cadence-measurement instrumentation also retired with the loop;
     # the WS waiter logs `time.monotonic()` elapsed via its own debug
     # line at ``ws_waiters._ws_wait_for_condition``.
-    _POLL_BUDGET_S: float = 6.0
+    POLL_BUDGET_S: float = 6.0
 
     async def _poll_for_automation_entity(self, unique_id: str) -> str | None:
         """Discover the entity_id assigned to a newly created automation.
@@ -1536,7 +1441,7 @@ class HomeAssistantClient:
 
         try:
             entity_id = await wait_for_automation_entity_by_unique_id(
-                self, unique_id, timeout=self._POLL_BUDGET_S
+                self, unique_id, timeout=self.POLL_BUDGET_S
             )
         except HomeAssistantError as e:
             # Narrow catch: programming bugs (TypeError/KeyError/etc.) propagate.
@@ -1582,11 +1487,7 @@ class HomeAssistantClient:
                 "operation": "deleted",
             }
         except HomeAssistantAPIError as e:
-            # Core's DELETE answers a missing id with 400, not 404.
-            if (
-                e.status_code == 400
-                and (e.response_data or {}).get("message") == "Resource not found"
-            ):
+            if e.config_not_found:
                 raise HomeAssistantAPIError(
                     f"Automation not found: {identifier} (unique_id: {unique_id})",
                     status_code=404,
@@ -1750,17 +1651,12 @@ class HomeAssistantClient:
         subentry_type: str,
         *,
         subentry_id: str | None = None,
-        show_advanced_options: bool | None = None,
     ) -> dict[str, Any]:
         """Start a config subentry create or reconfigure flow."""
-        # HA 2026.6+ treats show_advanced_options as a no-op; keep passing it
-        # for older HA versions until the server-side property is removed.
         # HA requires the handler as [parent_entry_id, subentry_type].
         payload: dict[str, Any] = {"handler": [entry_id, subentry_type]}
         if subentry_id is not None:
             payload["subentry_id"] = subentry_id
-        if show_advanced_options is not None:
-            payload["show_advanced_options"] = show_advanced_options
 
         logger.debug(
             "Starting config subentry flow for entry %s and type %s",
@@ -1903,124 +1799,63 @@ class HomeAssistantClient:
         """
         from .websocket_client import get_websocket_client
 
-        max_retries = 2
-        retry_delay = 0.5  # seconds
-        # Whether an earlier attempt got past acquisition, so may have sent.
-        sent_before = False
+        try:
+            # Per-client WebSocket keyed to this client's credentials (verify_ssl
+            # included so a verify_ssl=False client never shares a
+            # default-verification pooled connection).
+            ws_client = await get_websocket_client(
+                url=self.base_url, token=self.token, verify_ssl=self.verify_ssl
+            )
+        except Exception as e:
+            # No usable connection, whatever was raised (an auth failure, the
+            # pool-lock guard's bare ``Exception``): nothing was sent.
+            logger.error(f"WebSocket transport failed ({message.get('type')}): {e}")
+            raise HomeAssistantCommandNotSent(str(e)) from e
 
-        for attempt in range(max_retries):
-            # Whether the failure happened before a usable connection existed.
-            acquiring = True
-            try:
-                # Use per-client WebSocket keyed to this client's credentials
-                # (verify_ssl included so a verify_ssl=False client never
-                # shares a default-verification pooled connection).
-                ws_client = await get_websocket_client(
-                    url=self.base_url,
-                    token=self.token,
-                    verify_ssl=self.verify_ssl,
-                )
-                acquiring = False
-
-                # render_template is a subscription; see _handle_render_template.
-                if message.get("type") == "render_template":
-                    return await self._handle_render_template(ws_client, message)
-
-                # Extract command type and parameters for other commands
-                message_copy = message.copy()
-                command_type = message_copy.pop("type")
-                result = await ws_client.send_command(command_type, **message_copy)
-
-                return result
-
-            except Exception as e:
-                error_str = str(e)
-                is_403 = "403" in error_str and "Forbidden" in error_str
-
-                # Transient 403 (rate limiting / reverse proxy throttling): retry
-                # before deciding anything, since the next attempt may succeed.
-                if is_403 and attempt < max_retries - 1:
-                    logger.warning(
-                        f"WebSocket 403 error (attempt {attempt + 1}/{max_retries}), "
-                        f"retrying after {retry_delay}s: {error_str}"
-                    )
-                    await asyncio.sleep(retry_delay)
-                    sent_before = sent_before or not acquiring
-                    continue
-
-                # Phase first, type second. Failing before a client exists is
-                # transport evidence whatever was raised: an auth failure or the
-                # pool-lock guard's bare ``Exception`` is no no-answer class.
-                # Past acquisition only those classes count (``send_command``
-                # re-raises the original ``ConnectionClosed`` /
-                # ``ConnectionResetError`` to keep writes at-most-once); anything
-                # else is Home Assistant's own answer or a local bug.
-                if acquiring or isinstance(e, _NO_ANSWER_ERRORS):
-                    # One error channel for "no answer came back" (#1947): the
-                    # caller decides the policy. Callers that legitimately continue
-                    # on a missing answer catch this and say in ``warnings`` what
-                    # they skipped; callers whose output would read as a negative
-                    # finding let it propagate.
-                    logger.error(
-                        f"WebSocket transport failed ({message.get('type')}): {e}"
-                    )
-                    if acquiring and not sent_before:
-                        # No attempt obtained a client, so nothing was sent.
-                        raise HomeAssistantCommandNotSent(error_str) from e
-                    if isinstance(e, HomeAssistantConnectionError) and not (
-                        sent_before and isinstance(e, HomeAssistantCommandNotSent)
-                    ):
-                        # Re-raised unchanged so subtypes and the traceback
-                        # survive; not "never sent" once an attempt may have sent.
-                        raise
-                    raise HomeAssistantConnectionError(error_str) from e
-
-                # Deliberate asymmetry (#1966 review item 8): a 403 that
-                # exhausts its retries DURING acquisition is transport death -
-                # no client was ever obtained - so it raises and loses the
-                # reverse-proxy suggestions below. The 403 text survives in the
-                # message, and returning a soft envelope there instead would
-                # put a blocked transport back on the degrade path this change
-                # exists to close. Past acquisition the socket is alive and HA
-                # (or a proxy) answered, so the tailored suggestions apply.
-                if is_403:
-                    logger.error(
-                        f"WebSocket 403 error after {max_retries} attempts: {error_str}"
-                    )
-                    return {
-                        "success": False,
-                        "error": f"WebSocket request blocked (403 Forbidden): {error_str}",
-                        "error_code": getattr(e, "code", None),
-                        "suggestions": [
-                            "This may be caused by a reverse proxy or security filter",
-                            "Try simplifying the request (e.g., shorter templates, fewer parameters)",
-                            "If using complex templates, try breaking them into smaller parts",
-                            "Check if your Home Assistant is behind a reverse proxy with security rules",
-                        ],
-                    }
-
-                # Name the command in the log line: a bare "Command failed:
-                # Unknown command." is undiagnosable from a user's log
-                # (issue #1889 took a live reproduction to attribute).
-                code = getattr(e, "code", None)
-                logger.log(
-                    logging.DEBUG if code in expected_error_codes else logging.ERROR,
-                    f"WebSocket message failed ({message.get('type')}): {e}",
-                )
-                # Preserve HA's structured error code (e.g. ``not_found``) so callers
-                # can distinguish HA's authoritative verdict from a transient failure
-                # instead of only seeing the stringified message.
-                return {
-                    "success": False,
-                    "error": str(e),
-                    "error_code": getattr(e, "code", None),
-                }
-
-        # Unreachable: every attempt either returns, raises, or ``continue``s,
-        # and the last attempt cannot ``continue`` (the 403 branch guards on
-        # ``attempt < max_retries - 1``). Assert rather than return a
-        # contextless failure envelope that would read as a soft error.
-        raise AssertionError("send_websocket_message loop exited without a result")
+        # A command is sent once: once it went out, Home Assistant may have run
+        # it, so no failure below is retried.
+        try:
+            # render_template is a subscription; see _handle_render_template.
+            if message.get("type") == "render_template":
+                return await self._handle_render_template(ws_client, message)
+            message_copy = message.copy()
+            command_type = message_copy.pop("type")
+            result: dict[str, Any] = await ws_client.send_command(
+                command_type, **message_copy
+            )
+            return result
+        except _NO_ANSWER_ERRORS as e:
+            # One error channel for "no answer came back" (#1947): the caller
+            # decides the policy. ``send_command`` re-raises the original
+            # ``ConnectionClosed`` / ``ConnectionResetError`` to keep writes
+            # at-most-once, so those arrive untranslated.
+            # A caller that waits zero seconds sent a command Core never answers.
+            log = logger.debug if message.get("_wait_timeout") == 0 else logger.error
+            log(f"WebSocket transport failed ({message.get('type')}): {e}")
+            if isinstance(e, HomeAssistantConnectionError):
+                # Re-raised unchanged so subtypes and the traceback survive.
+                raise
+            raise HomeAssistantConnectionError(str(e)) from e
+        except Exception as e:  # noqa: BLE001  # an answer or local bug is an envelope
+            # Home Assistant's own answer (or a proxy's), or a local bug.
+            error_str = str(e)
+            code = getattr(e, "code", None)
+            # Name the command in the log line: a bare "Command failed:
+            # Unknown command." is undiagnosable from a user's log
+            # (issue #1889 took a live reproduction to attribute).
+            logger.log(
+                logging.DEBUG if code in expected_error_codes else logging.ERROR,
+                f"WebSocket message failed ({message.get('type')}): {e}",
+            )
+            # Preserve HA's structured error code (e.g. ``not_found``) so callers
+            # can distinguish HA's authoritative verdict from a transient failure
+            # instead of only seeing the stringified message.
+            fields = (
+                e.refusal_fields()
+                if isinstance(e, HomeAssistantCommandError)
+                else {"error_code": code}
+            )
+            return {"success": False, "error": error_str, **fields}
 
     async def _handle_render_template(
         self, ws_client: Any, message: dict[str, Any]
@@ -2064,7 +1899,7 @@ class HomeAssistantClient:
                 "error": str(e).removeprefix(
                     "subscribe_command('render_template') failed: "
                 ),
-                "error_code": e.code,
+                **e.refusal_fields(),
                 "template": template,
             }
         except TimeoutError:
@@ -2108,48 +1943,30 @@ class HomeAssistantClient:
             await ws_client.release_subscription(sub_id)
 
     async def _resolve_script_id(self, identifier: str) -> str:
-        """
-        Resolve a script identifier to its storage key via the entity registry.
+        """Resolve a script identifier to its storage key.
 
-        Scripts may be renamed in the HA UI, changing the entity_id but keeping
-        the original storage key. This method looks up the entity registry via
-        WebSocket to find the actual storage key (unique_id).
-
-        Unlike automations (which expose their storage key in state attributes),
-        scripts require a WebSocket entity registry lookup.
-
-        Args:
-            identifier: Script ID (with or without 'script.' prefix)
-
-        Returns:
-            The storage key for the configuration API
+        A UI rename changes the entity_id but keeps the storage key, which the
+        registry holds as the entity's ``unique_id``. ``script.<x>`` names that
+        entity, or key ``<x>`` when the registry names none; a failed lookup of
+        it raises (:meth:`_registry_entry`). A bare id that is itself a
+        storage key names that script, not another one whose entity is
+        ``script.<id>``: the config is read when the registry key of
+        ``script.<id>`` differs from the bare id, and a failure of that read
+        other than a 404 propagates.
         """
         bare_id = identifier.removeprefix("script.")
-        entity_id = f"script.{bare_id}"
-        try:
-            result = await self.send_websocket_message(
-                {"type": "config/entity_registry/get", "entity_id": entity_id}
-            )
-            if result.get("success") is not False:
-                unique_id = result.get("result", {}).get("unique_id")
-                if unique_id:
-                    if unique_id != bare_id:
-                        logger.debug(
-                            f"Resolved script entity_id {entity_id} to storage key {unique_id}"
-                        )
-                    return str(unique_id)
-        except HomeAssistantConnectionError:
-            # A dead transport must not become a silent guess: the fallback
-            # below assumes the storage key equals the bare entity_id, which is
-            # exactly what a UI rename breaks. Guessing it on a write path
-            # writes a NEW object under the wrong key instead of updating the
-            # renamed one, so let the caller fail loud (#1947).
-            raise
-        except Exception:
-            logger.debug(
-                f"Entity registry lookup failed for {entity_id}, using bare id: {bare_id}",
-                exc_info=True,  # Log full traceback for better debugging
-            )
+        unique_id = (await self._registry_entry("script", identifier) or {}).get(
+            "unique_id"
+        )
+        qualified = identifier != bare_id
+        # Another key only from script.<bare_id>'s entry: the script tools'
+        # entity_registration.script_entity_id relies on it.
+        if unique_id and (
+            qualified
+            or unique_id == bare_id
+            or not await self._config_exists("script", bare_id)
+        ):
+            return str(unique_id)
         return bare_id
 
     async def get_script_config(self, script_id: str) -> dict[str, Any]:
@@ -2180,9 +1997,9 @@ class HomeAssistantClient:
     ) -> dict[str, Any]:
         """Create or update Home Assistant script configuration.
 
-        ``resolved_id``, when provided, is the already-resolved storage key used
-        as the write target (the caller ran :meth:`_resolve_script_id`),
-        skipping the redundant entity-registry lookup. ``script_id`` stays the
+        ``resolved_id``, when provided, is the storage key written under,
+        unresolved: a key the caller resolved with :meth:`_resolve_script_id`,
+        or a bare key that must not be resolved (a backup restore). ``script_id`` stays the
         CALLER's identifier and is used only to default a missing ``alias`` — a
         renamed script (whose storage key differs from the entity slug the
         caller passed) keeps its caller-facing name rather than resetting the
@@ -2200,7 +2017,7 @@ class HomeAssistantClient:
             # ``write_id``) so a renamed script's user-visible name is preserved
             # instead of being reset to the storage key.
             if "alias" not in config:
-                config["alias"] = script_id
+                config["alias"] = script_id.removeprefix("script.")
 
             # Validate that either sequence or use_blueprint is present
             if "sequence" not in config and "use_blueprint" not in config:
@@ -2215,15 +2032,15 @@ class HomeAssistantClient:
                 "success": True,
                 "script_id": write_id,
                 "result": response.get("result", "ok"),
-                "operation": "created" if response.get("result") == "ok" else "updated",
             }
         except Exception as e:
             logger.error(f"Failed to upsert script config for {script_id}: {e}")
             raise
 
     async def delete_script_config(self, script_id: str) -> dict[str, Any]:
-        """Delete Home Assistant script configuration."""
-        resolved_id = await self._resolve_script_id(script_id)
+        """A bare id is deleted under that key unresolved; script.<x> resolves."""
+        bare = not script_id.startswith("script.")
+        resolved_id = script_id if bare else await self._resolve_script_id(script_id)
         try:
             endpoint = f"config/script/config/{resolved_id}"
             response = await self._request("DELETE", endpoint)
@@ -2235,7 +2052,7 @@ class HomeAssistantClient:
                 "operation": "deleted",
             }
         except HomeAssistantAPIError as e:
-            if e.status_code == 404:
+            if e.config_not_found:
                 msg = f"Script not found: {script_id}"
                 if resolved_id != script_id:
                     msg += f" (resolved storage key: {resolved_id})"
@@ -2260,64 +2077,92 @@ class HomeAssistantClient:
     async def _resolve_scene(self, identifier: str) -> SceneResolution:
         """Resolve a scene identifier to its storage key AND registry metadata.
 
-        Backs :meth:`resolve_scene_id`. Returns the storage key together with
-        ``registry_hit`` (did the entity actually resolve?) and ``platform`` - the
-        two signals a bare storage key throws away. Callers that hit a config-API
-        404 need ``registry_hit`` to tell "entity missing" from "entity exists but
-        has no editable storage config", and ``platform`` to name the owning
-        integration in the resulting error (issue #1971).
+        Backs :meth:`resolve_scene_id`. On a config-API 404, ``registry_hit``
+        tells "entity missing" from "entity exists but has no editable storage
+        config", and ``platform`` names the owning integration (issue #1971).
 
-        Args:
-            identifier: Scene ID (with or without ``scene.`` prefix)
+        A bare id that is a storage key wins over another scene whose entity
+        is ``scene.<id>``; ``scene.<id>`` raises :class:`SceneIdNotAnEntityError`
+        instead of being read as key ``<id>`` when the registry has no such
+        entity but that key holds a scene. The config is read only for a bare id
+        whose registry key differs or whose lookup failed, and for an
+        unregistered ``scene.<id>``.
 
-        Returns:
-            A :class:`SceneResolution`. On any lookup failure it falls back to the
-            bare id with ``registry_hit=False`` - a write path must not treat the
-            guessed bare id as a confirmed resolve.
+        ``registry_hit=False`` marks a key the registry did not name: a stored
+        key the config read confirmed, or the slug of an unregistered id. A
+        lookup that fails otherwise raises (:meth:`_registry_entry`), as does a
+        non-404 failure of that read.
         """
         bare_id = identifier.removeprefix("scene.")
-        entity_id = f"scene.{bare_id}"
+        entry = await self._registry_entry("scene", identifier)
+        fallback = SceneResolution(bare_id, registry_hit=False, platform=None)
+        qualified = identifier != bare_id
+        if entry and entry.get("unique_id"):
+            registered = SceneResolution(
+                str(entry["unique_id"]),
+                registry_hit=True,
+                platform=entry.get("platform"),
+            )
+            if qualified or registered.storage_key == bare_id:
+                return registered
+            return (
+                fallback if await self._config_exists("scene", bare_id) else registered
+            )
+        if qualified and entry is None and await self._config_exists("scene", bare_id):
+            raise SceneIdNotAnEntityError(identifier, bare_id)
+        return fallback
+
+    async def _registry_entry(
+        self, domain: str, identifier: str
+    ) -> dict[str, Any] | None:
+        """The registry entry of ``<domain>.<id>``, None when the registry has
+        none or Core refuses ``<domain>.<id>`` as an entity_id.
+
+        Any other failure is no answer, and a guess could reach another object:
+        it raises, except for a bare id that is a storage key, which names that
+        object anyway. A dead transport propagates too, so a renamed object's
+        update is not written under a guessed key (#1947).
+        """
+        bare_id = identifier.removeprefix(f"{domain}.")
+        entity_id = f"{domain}.{bare_id}"
+        answers = frozenset({"not_found", "invalid_format"})
+        result = await self.send_websocket_message(
+            {"type": "config/entity_registry/get", "entity_id": entity_id},
+            expected_error_codes=answers,
+        )
+        if result.get("success") is not False:
+            entry: dict[str, Any] = result.get("result") or {}
+            return entry
+        if result.get("error_code") in answers or (
+            identifier == bare_id and await self._config_exists(domain, bare_id)
+        ):
+            return None
+        raise HomeAssistantCommandError.from_reply(
+            result, f"Could not look up {entity_id}: {result.get('error')}"
+        )
+
+    async def _config_exists(self, domain: str, storage_key: str) -> bool:
+        """Whether Core's config API holds a ``domain`` config under ``storage_key``."""
         try:
-            result = await self.send_websocket_message(
-                {"type": "config/entity_registry/get", "entity_id": entity_id}
-            )
-            if result.get("success") is not False:
-                entry = result.get("result") or {}
-                unique_id = entry.get("unique_id")
-                if unique_id:
-                    if unique_id != bare_id:
-                        logger.debug(
-                            f"Resolved scene entity_id {entity_id} to storage key {unique_id}"
-                        )
-                    return SceneResolution(
-                        storage_key=str(unique_id),
-                        registry_hit=True,
-                        platform=entry.get("platform"),
-                    )
-        except HomeAssistantConnectionError:
-            # A dead transport must not become a silent guess: the fallback
-            # below assumes the storage key equals the bare entity_id, which is
-            # exactly what a UI rename breaks. Guessing it on a write path
-            # writes a NEW object under the wrong key instead of updating the
-            # renamed one, so let the caller fail loud (#1947).
+            await self._request("GET", f"config/{domain}/config/{storage_key}")
+        except HomeAssistantAPIError as e:
+            if e.status_code == 404:
+                return False
             raise
-        except Exception:
-            logger.debug(
-                f"Entity registry lookup failed for {entity_id}, using bare id: {bare_id}",
-                exc_info=True,
-            )
-        return SceneResolution(storage_key=bare_id, registry_hit=False, platform=None)
+        return True
 
     async def resolve_scene_id(self, identifier: str) -> str:
         """
-        Resolve a scene identifier to its storage key via the entity registry.
+        Resolve a scene identifier to its storage key (entity registry, plus a
+        config read when ids collide).
 
         Scenes may be renamed in the HA UI, changing the entity_id but keeping
         the original storage key. Like :meth:`_resolve_script_id`, this returns
-        the bare storage key and needs a WebSocket entity registry lookup because
-        the state attributes do not surface it; the parity ends there, since the
-        underlying :meth:`_resolve_scene` additionally carries registry metadata
-        (``registry_hit``/``platform``) that the script resolver has no analogue for.
+        the bare storage key and reads the entity registry, which also holds a
+        scene that has no state (a disabled one), and gives a bare storage key
+        precedence. Unlike it, :meth:`_resolve_scene` raises
+        :class:`SceneIdNotAnEntityError` for an unregistered ``scene.<id>`` when
+        key ``<id>`` holds a scene, and carries ``registry_hit``/``platform``.
 
         Thin wrapper over :meth:`_resolve_scene` for callers that only need the
         storage key (e.g. the write path); the read/delete paths use the richer
@@ -2459,14 +2304,6 @@ class HomeAssistantClient:
             if "name" not in config:
                 config["name"] = scene_id.removeprefix("scene.")
 
-            # Validate required field. ``entities`` is a dict keyed by entity_id,
-            # not a list — distinct from script ``sequence`` and automation ``action``.
-            if "entities" not in config:
-                raise ValueError(
-                    "Scene configuration must include an 'entities' field "
-                    "(a dict keyed by entity_id)"
-                )
-
             response = await self._request("POST", endpoint, json=config)
 
             # Issue #1168 R3 blocker 4: HA's POST /config/scene/config/<id>
@@ -2496,7 +2333,8 @@ class HomeAssistantClient:
         the full outcome through - the endpoint uses its ``storage_key`` while
         ``scene_id`` stays the caller's slug for messages, and its ``registry_hit``
         drives the config-404 classification (issue #1971) with no extra lookup.
-        Otherwise the id is resolved here.
+        Otherwise the id is resolved here: a bare id can reach another key, which
+        ``ha_config_remove_scene`` refuses before it calls.
         """
         if resolution is not None:
             resolved_id = resolution.storage_key
@@ -2514,21 +2352,6 @@ class HomeAssistantClient:
                 "operation": "deleted",
             }
         except HomeAssistantAPIError as e:
-            if e.status_code == 404:
+            if e.config_not_found:
                 await self._raise_scene_config_404(scene_id, resolved_id, resolution)
-            elif e.status_code == 405:
-                raise HomeAssistantAPIError(
-                    f"Cannot delete scene '{scene_id}': The HTTP DELETE method is blocked. "
-                    f"This typically occurs when running ha-mcp as a Home Assistant add-on, because "
-                    f"the Supervisor ingress proxy only allows GET and POST requests. "
-                    f"It may also occur if the scene is defined in YAML configuration files. "
-                    f"WORKAROUNDS: "
-                    f"(1) Use ha-mcp via pip, Docker, or as an external MCP server instead of the add-on. "
-                    f"(2) Use a long-lived access token to connect directly to Home Assistant's API. "
-                    f"(3) If the scene is YAML-defined, edit the configuration file directly. "
-                    f"(4) As a fallback, rename the scene with a 'DELETE_' prefix "
-                    f"(e.g., 'DELETE_{scene_id}') so you can identify and manually delete it later "
-                    f"via the Home Assistant UI (Settings > Automations & Scenes > Scenes).",
-                    status_code=405,
-                ) from e
             raise
