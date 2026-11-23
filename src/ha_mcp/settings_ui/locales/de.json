@@ -475,8 +475,8 @@
     "advanced.individual_fetch_batch_size.help": "Gleichzeitige Konfigurationsabrufe pro ID. Bei seriellen HA-Servern in Richtung 1 verringern.",
     "advanced.enable_history_query_guardrails.label": "Verlauf-Abfrage-Schutzplanken",
     "advanced.enable_history_query_guardrails.help": "Recorder-Abfragen ablehnen, die konservative Entitäts- und Zeitbereichsbudgets überschreiten. Standardmäßig deaktiviert.",
-    "advanced.hacs_refresh_after_update.label": "Komponente in HACS nach einem Update aktualisieren",
-    "advanced.hacs_refresh_after_update.help": "Fordere HACS (den Marktplatz unter Home Assistant 2026.11+) beim Start nach einem Server-Update auf, das HA-MCP-Repository erneut zu überprüfen, damit das passende Update sofort angezeigt wird, anstatt auf die nächste Hintergrundprüfung zu warten. Standardmäßig aus; Installationen, die dies bereits getan haben, behalten es bei.",
+    "advanced.hacs_refresh_after_update.label": "Die Komponente im Marketplace nach einem Update aktualisieren",
+    "advanced.hacs_refresh_after_update.help": "Beim Start nach einem Server-Update den Marketplace bitten, das HA-MCP-Repository erneut zu überprüfen, damit das passende Update sofort angezeigt wird, anstatt auf die nächste Hintergrundprüfung zu warten. Standardmäßig aus; Installationen, die dies bereits getan haben, behalten es bei.",
     "advanced.ha_tool_concurrency.label": "Home-Assistant-Tool-Gleichzeitigkeit",
     "advanced.ha_tool_concurrency.help": "Optionale Begrenzung für äußere Home Assistant-Tool-Aufrufe über alle Sitzungen hinweg. Interne REST-, WebSocket- und tool-spezifische Fan-Out-Gleichzeitigkeit bleibt unverändert. 0 belässt das Verhalten unbegrenzt. Ein Aufruf, der auf Kapazität wartet, schlägt nach 60 Sekunden fehl.",
     "advanced.dashboard_screenshot_engine_url.label": "Dashboard-Screenshot-Engine-URL",
@@ -514,7 +514,7 @@
     "advanced.code_mode_saved_tools_path.label": "Pfad für gespeicherte Tools",
     "advanced.code_mode_saved_tools_path.help": "JSON-Datei zum Speichern von benutzerdefinierten Tools über Neustarts hinweg.",
     "advanced.extra_yaml_write_keys.label": "Zusätzliche YAML-Schreib-Keys",
-    "advanced.extra_yaml_write_keys.help": "Zusätzliche Top-Level-Schlüssel, die ha_config_set_yaml zusätzlich zu den integrierten für YAML-erste Integrationen auf dieser Installation schreiben kann (z. B. alert2). Gib einen Schlüssel pro Zeile ein oder trenne Schlüssel mit Kommas. Schlüssel, die Home Assistants eigene Vertrauensgrenze neu definieren, können niemals hinzugefügt werden und werden ignoriert. Erfordert die Custom Component 1.2.4 oder neuer.",
+    "advanced.extra_yaml_write_keys.help": "Zusätzliche Root-Schlüssel, die ha_config_set_yaml zusätzlich zu den integrierten für YAML-First-Integrationen auf dieser Installation schreiben darf (z. B. alert2). Gib einen Schlüssel pro Zeile ein oder trenne Schlüssel durch Kommas. Schlüssel, die Home Assistants eigene Vertrauensgrenze neu definieren, können niemals hinzugefügt werden und werden ignoriert.",
     "advanced.redact_app_option_keys.label": "Zusätzliche App-Optionsschlüssel zum Schwärzen",
     "advanced.redact_app_option_keys.help": "App- (Add-on-)Optionsnamen zum Schwärzen wie Passwortfelder für Apps, deren Schema ein Geheimnis im Klartext speichert (zum Beispiel backup_password). Trenne Namen mit Kommas oder Zeilenumbrüchen. Ein Name gilt für jede App; schreibe app_slug:name, um ihn auf eine App zu beschränken. Das Benennen einer Optionsgruppe deckt jede Option darin ab. Wird nur verwendet, wenn Geheimnisse schwärzen aktiv ist. Standardmäßig leer.",
     "advanced.sidecar_pin_port.label": "Einstellungs-UI-Sidecar-Port",
@@ -746,7 +746,7 @@
     },
     "ha_get_camera_image": {
       "title": "Kamerabild abrufen",
-      "description": "Rufe ein Schnappschussbild von einer Home-Assistant-Kamera-Entität ab."
+      "description": "Ein Schnappschussbild von einer Home Assistant-Kamera- oder Image-Entität abrufen."
     },
     "ha_get_dashboard_screenshot": {
       "title": "Dashboard-Screenshot abrufen",
@@ -758,15 +758,11 @@
     },
     "ha_get_entity": {
       "title": "Entität abrufen",
-      "description": "Ruft Registerinformationen über eine oder mehrere Entitäten ab."
-    },
-    "ha_get_entity_exposure": {
-      "title": "Entitäts-Sichtbarkeit abrufen",
-      "description": "Zeigt, welche Entitäten für Sprachassistenten freigegeben sind."
+      "description": "Ruft Entitätsregister-Einträge ab oder ohne Entität die Registereinstellungen und freigegebenen Entitäten."
     },
     "ha_get_hacs_info": {
-      "title": "HACS-Informationen abrufen",
-      "description": "Durchsucht den HACS-Store oder ruft Repository-Informationen ab."
+      "title": "Marketplace-Informationen abrufen",
+      "description": "Rufe Daten vom Home Assistant Marketplace ab, was HACS im Jahr 2026.11 wurde."
     },
     "ha_get_history": {
       "title": "Verlauf oder Statistiken abrufen",
@@ -793,8 +789,8 @@
       "description": "Ruft aktuellen Status und Attribute einer oder mehrerer Entitäten ab."
     },
     "ha_get_system_health": {
-      "title": "Systemzustand abrufen",
-      "description": "Ruft Zustandsinformationen zu Home Assistant, Zigbee, Z-Wave und Integrationen ab."
+      "title": "Systemgesundheit abrufen (inkl. ZHA-/Z-Wave-/Thread-/Matter-Netzwerke)",
+      "description": "Ruft die Systemgesundheit von Home Assistant ab, einschließlich Zigbee (ZHA), Z-Wave JS, Thread- und Matter-Netzwerken."
     },
     "ha_get_todo": {
       "title": "To-do-Listen abrufen",
@@ -810,7 +806,7 @@
     },
     "ha_list_floors_areas": {
       "title": "Etagen und Bereiche auflisten",
-      "description": "Zeigt Etagen mit verschachtelten Bereichen, einschließlich Bereiche ohne Etage."
+      "description": "Liste die Stockwerke in der Reihenfolge auf, in der Home Assistant sie führt, jeweils mit ihren zugewiesenen Bereichen verschachtelt sowie Bereichen ohne Stockwerk."
     },
     "ha_list_services": {
       "title": "Dienste auflisten",
@@ -837,8 +833,12 @@
       "description": "Verwalte die Einstellungen des Home-Assistant-Energie-Dashboards: Stromnetz / Solar /"
     },
     "ha_manage_hacs": {
-      "title": "HACS verwalten",
-      "description": "HACS (Home Assistant Community Store) verwalten — installieren/aktualisieren, entfernen, benutzerdefinierte Repositories hinzufügen oder Repository aktualisieren in"
+      "title": "Marketplace verwalten",
+      "description": "Verwalte den Home Assistant Marketplace (was HACS in 2026.11 wurde): Repositories installieren, aktualisieren, entfernen und hinzufügen."
+    },
+    "ha_manage_logs": {
+      "title": "Recorder, Statistiken und Protokolle verwalten",
+      "description": "Den Home Assistant-Recorder, seine langfristigen Statistiken und seine Protokolle verwalten."
     },
     "ha_manage_pipeline": {
       "title": "Assist-Pipeline verwalten",
@@ -905,8 +905,8 @@
       "description": "Durchsucht Entitäten und Inhalte von Automatisierungen, Skripten, Szenen, Helfern und Dashboards."
     },
     "ha_set_area_or_floor": {
-      "title": "Bereich oder Etage erstellen/aktualisieren",
-      "description": "Erstellt oder aktualisiert einen Bereich oder eine Etage in Home Assistant."
+      "title": "Bereiche oder Stockwerke erstellen, aktualisieren oder neu anordnen",
+      "description": "Erstelle, aktualisiere oder ordne Home Assistant Bereiche oder Stockwerke neu an."
     },
     "ha_set_device": {
       "title": "Gerät aktualisieren",
@@ -914,7 +914,7 @@
     },
     "ha_set_entity": {
       "title": "Entität aktualisieren",
-      "description": "Aktualisiert Name, Bereich, Labels und andere Entitätseigenschaften."
+      "description": "Aktualisiert Entitätsregister-Einträge oder ohne entity_id die registerweiten Einstellungen."
     },
     "ha_set_integration": {
       "title": "Integration aktualisieren",

@@ -34,17 +34,11 @@ from ._handlers_server import (
 )
 from ._handlers_theme import build_theme_handlers
 from ._handlers_tools import build_tools_handlers
-from ._i18n import (
-    LOCALE_COOKIE,
-    build_payload,
-    select_locale,
-    serialize_payload,
-)
+from ._handlers_transfer import build_transfer_handlers
 from ._persistence import (
     _atomic_write_json,
     _get_backup_settings_override_path,
     _get_config_path,
-    _get_override_file_lock,
     _load_backup_settings_override,
     _save_backup_settings_override,
     dump_tool_metadata_cache,
@@ -72,6 +66,13 @@ from ._tools_meta import (
     _get_tool_metadata,
     apply_tool_visibility,
     effective_mandatory_tools,
+    primary_tag,
+)
+from .i18n import (
+    LOCALE_COOKIE,
+    build_payload,
+    select_locale,
+    serialize_payload,
 )
 
 if TYPE_CHECKING:
@@ -497,6 +498,7 @@ def build_settings_handlers(
     handlers.update(build_server_handlers(server, is_sidecar=is_sidecar))
     handlers.update(build_advanced_handlers(server))
     handlers.update(build_oauth_callback_handlers(server))
+    handlers.update(build_transfer_handlers(server))
 
     return handlers
 
@@ -596,6 +598,13 @@ def is_http_settings_mounted() -> bool:
     return _http_settings_mounted
 
 
+def reset_http_settings_state() -> None:
+    """Forget process-local route advertisement between isolated server starts."""
+    global _http_settings_prefix, _http_settings_mounted
+    _http_settings_prefix = None
+    _http_settings_mounted = False
+
+
 # Every settings route except the add-on-only root mount is defined once in
 # this table. register_settings_routes mounts it under each active prefix: at
 # root in add-on mode (so HA ingress can proxy localhost:9583/), and under the
@@ -635,6 +644,10 @@ SETTINGS_ROUTES: tuple[tuple[str, list[str], str], ...] = (
     # None-mode OAuth callback allowlist (#2427) — component-owned list
     ("/api/settings/oauth-callbacks", ["GET"], "get_oauth_callbacks"),
     ("/api/settings/oauth-callbacks", ["POST"], "save_oauth_callbacks"),
+    # Settings export / import (#3099); the HA sidebar panel answers these
+    # itself so it can also move the component's config entries.
+    ("/api/settings/transfer/export", ["POST"], "export_settings"),
+    ("/api/settings/transfer/import", ["POST"], "import_settings"),
     # Tool security policies endpoints
     ("/api/policy/config", ["GET"], "policy_get_config"),
     ("/api/policy/config", ["PUT"], "policy_put_config"),

@@ -475,8 +475,8 @@
     "advanced.individual_fetch_batch_size.help": "每個 ID 的並行設定擷取數。在序列式 HA 伺服器上請調低至接近 1。",
     "advanced.enable_history_query_guardrails.label": "歷史記錄查詢安全護欄",
     "advanced.enable_history_query_guardrails.help": "拒絕超出保守實體與時間範圍預算的記錄器查詢。預設為停用。",
-    "advanced.hacs_refresh_after_update.label": "更新後在 HACS 中重新整理元件",
-    "advanced.hacs_refresh_after_update.help": "在伺服器更新後的啟動時，要求 HACS（Home Assistant 2026.11+ 上的 Marketplace）重新檢查 HA-MCP 套件庫，以便立即顯示其符合的更新，而不需要等待下一次背景檢查。預設為關閉；已經這樣做的安裝會保持開啟。",
+    "advanced.hacs_refresh_after_update.label": "更新後在市集中重新整理元件",
+    "advanced.hacs_refresh_after_update.help": "在伺服器更新後的啟動時，要求市集重新檢查 HA-MCP 套件庫，以便立即顯示對應的更新，而無需等待下一次背景檢查。預設為關閉；先前已啟用此功能的安裝將保持開啟狀態。",
     "advanced.ha_tool_concurrency.label": "Home Assistant 工具並行數",
     "advanced.ha_tool_concurrency.help": "跨所有會話的外層 Home Assistant 工具呼叫的選用限制。內部 REST、WebSocket 及每個工具的分支（fan-out）並行性保持不變。0 表示維持無限制行為。等待容量的呼叫將在 60 秒後失敗。",
     "advanced.dashboard_screenshot_engine_url.label": "儀表板截圖引擎 URL",
@@ -514,7 +514,7 @@
     "advanced.code_mode_saved_tools_path.label": "已儲存工具路徑",
     "advanced.code_mode_saved_tools_path.help": "用於在重新啟動之間保存自訂工具的 JSON 檔案。",
     "advanced.extra_yaml_write_keys.label": "額外的 YAML 寫入金鑰",
-    "advanced.extra_yaml_write_keys.help": "除了內建的頂層鍵之外，ha_config_set_yaml 還可以為此安裝中的 YAML 優先整合（例如 alert2）寫入額外的頂層鍵。每行輸入一個鍵，或用逗號分隔鍵。重新定義 Home Assistant 自身信任邊界的鍵永遠無法被新增且將被忽略。需要自訂元件 1.2.4 或更新版本。",
+    "advanced.extra_yaml_write_keys.help": "此安裝中適用於 YAML 優先整合（例如 alert2）的額外頂層鍵，ha_config_set_yaml 除了內建鍵之外亦可寫入這些鍵。每行輸入一個鍵，或以逗號分隔多個鍵。重新定義 Home Assistant 自身信任邊界的鍵永遠無法新增，並會遭到忽略。",
     "advanced.redact_app_option_keys.label": "要修訂的額外應用程式選項金鑰",
     "advanced.redact_app_option_keys.help": "針對其結構描述將機密儲存為純文字（例如 backup_password）的應用程式，指定要像密碼欄位一樣進行修訂的應用程式（附加元件）選項名稱。多個名稱請用逗號或新行分隔。名稱適用於所有應用程式；若要限制為單一應用程式，請寫成 app_slug:name。命名選項群組會涵蓋其中的所有選項。僅在啟用「修訂機密」時使用。預設為空白。",
     "advanced.sidecar_pin_port.label": "設定 UI sidecar 連接埠",
@@ -715,7 +715,7 @@
     },
     "ha_get_camera_image": {
       "title": "取得相機影像",
-      "description": "從 Home Assistant 相機實體取得快照影像。"
+      "description": "從 Home Assistant 相機或圖片實體取得快照圖片。"
     },
     "ha_get_dashboard_screenshot": {
       "title": "取得儀表板螢幕截圖",
@@ -727,15 +727,11 @@
     },
     "ha_get_entity": {
       "title": "取得實體",
-      "description": "取得一個或多個實體的實體註冊表資訊。"
-    },
-    "ha_get_entity_exposure": {
-      "title": "取得實體暴露狀態",
-      "description": "取得實體暴露設定 - 列出全部或取得特定實體的設定。"
+      "description": "取得實體註冊表項目，若未指定實體則取得註冊表設定與公開的實體。"
     },
     "ha_get_hacs_info": {
-      "title": "取得 HACS 資訊",
-      "description": "取得 HACS (Home Assistant Community Store) 資料 — 搜尋商店或擷取儲存庫詳細資訊。"
+      "title": "取得市集資訊",
+      "description": "從 Home Assistant 的市集（即 HACS 在 2026.11 演變而成的名稱）取得資料。"
     },
     "ha_get_history": {
       "title": "取得實體歷史記錄或統計資料",
@@ -762,8 +758,8 @@
       "description": "取得一個或多個實體的目前狀態、狀態與屬性（燈光、開關、感測器、恆溫器、遮陽簾、鎖、fa"
     },
     "ha_get_system_health": {
-      "title": "取得系統健康狀態 (包含 ZHA/Z-Wave/整合診斷)",
-      "description": "取得 Home Assistant 系統健康狀態，包含 Zigbee (ZHA)、Z-Wave JS 以及每個整合的診斷傾印。"
+      "title": "取得系統健康狀態（包含 ZHA/Z-Wave/Thread/Matter 網路）",
+      "description": "取得 Home Assistant 系統健康狀態，包含 Zigbee (ZHA)、Z-Wave JS、Thread 與 Matter 網路。"
     },
     "ha_get_todo": {
       "title": "取得待辦事項",
@@ -779,7 +775,7 @@
     },
     "ha_list_floors_areas": {
       "title": "列出樓層與區域",
-      "description": "依層級升冪排序列出樓層，每個樓層巢狀包含指派的區域，外加沒有樓層的區域。"
+      "description": "列出 Home Assistant 中保持的樓層順序，每個樓層都巢狀包含其指定的區域，以及沒有樓層的區域。"
     },
     "ha_list_services": {
       "title": "列出可用服務",
@@ -806,8 +802,12 @@
       "description": "管理 Home Assistant 能源儀表板偏好設定：電網 / 太陽能 /"
     },
     "ha_manage_hacs": {
-      "title": "管理 HACS",
-      "description": "管理 HACS (Home Assistant Community Store) — 安裝/更新、移除、新增自訂儲存庫，或重新整理儲存庫中的"
+      "title": "管理市集",
+      "description": "管理 Home Assistant 的市集（即 HACS 在 2026.11 演變而成的名稱）：安裝、更新、移除與新增套件庫。"
+    },
+    "ha_manage_logs": {
+      "title": "管理記錄器、統計資料與日誌",
+      "description": "管理 Home Assistant 的記錄器、長期統計資料與其日誌。"
     },
     "ha_manage_pipeline": {
       "title": "管理語音助理管線",
@@ -874,8 +874,8 @@
       "description": "透過名稱、網域或區域搜尋實體（燈光、感測器、開關、恆溫器等）— 以及自動化/手稿/s 內部"
     },
     "ha_set_area_or_floor": {
-      "title": "建立或更新區域或樓層",
-      "description": "建立或更新 Home Assistant 區域或樓層。"
+      "title": "建立、更新或重新排序區域或樓層",
+      "description": "建立、更新或重新排序 Home Assistant 的區域或樓層。"
     },
     "ha_set_device": {
       "title": "設定裝置",
@@ -883,7 +883,7 @@
     },
     "ha_set_entity": {
       "title": "設定實體",
-      "description": "更新實體註冊表中的實體屬性。"
+      "description": "更新實體註冊表項目，若未指定 entity_id 則更新全註冊表設定。"
     },
     "ha_set_integration": {
       "title": "設定整合",

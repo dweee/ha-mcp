@@ -118,13 +118,13 @@ def _backup_write(args: dict[str, Any]) -> str | None:
         return None
     if scope == "snapshot" and action == "list":
         return None
+    if scope == "settings" and action == "export":
+        return None
     return f"scope={scope!r}, action={action!r}"
 
 
-# Add-on parameters that, when present, mean the call mutates add-on
-# configuration (so the read-only middleware must block it). Module-level
-# so the schema-drift guard test (test_read_only.py) can pin an
-# independent manifest against it — see item 10b / ha_manage_app.
+# ha_manage_app parameters that, set to anything but None, make the call an
+# app (add-on) configuration change, which the read-only middleware blocks.
 _ADDON_CONFIG_WRITE_PARAMS = ("options", "network", "boot", "auto_update", "watchdog")
 
 
@@ -224,6 +224,18 @@ def _theme_write(args: dict[str, Any]) -> str | None:
     return f"action={args.get('action')!r}"
 
 
+def _logs_write(args: dict[str, Any]) -> str | None:
+    # Reads (allowed): Core's statistics listing and its validation issues,
+    # and describe=True, which sends no operation. Strict ``is True`` for the
+    # reason given at dry_run above.
+    if args.get("describe") is True or args.get("action") in (
+        "recorder/list_statistic_ids",
+        "recorder/validate_statistics",
+    ):
+        return None
+    return f"action={args.get('action')!r}"
+
+
 def _radio_write(args: dict[str, Any]) -> str | None:
     action = args.get("action")
     # Reads (allowed): per-node diagnostics, the integration/network summary,
@@ -255,7 +267,7 @@ def _radio_write(args: dict[str, Any]) -> str | None:
 # cache is only listable here; ha_manage_radio's 'ping' probe, 'cluster_read'
 # 'list_datasets', 'get_config_params' and 'get_config_param' have no pure-read
 # duplicate elsewhere, while its
-# 'diagnostics'/'network_status' reads mirror ha_get_device /
+# 'diagnostics'/'network_status' reads overlap ha_get_device /
 # ha_get_system_health but stay reachable here mid-management;
 # ha_manage_security_policy's policy read is duplicated only by the
 # dev-mode-only ha_dev_manage_settings('get_policy')). Everything
@@ -278,8 +290,9 @@ READ_ONLY_EXEMPT_TOOLS: dict[str, ReadOnlyExemption] = {
     "ha_manage_backup": ReadOnlyExemption(
         _backup_write,
         "listing, viewing, and diffing per-edit backups (scope='edits', "
-        "action='list', 'view', or 'diff') and listing snapshots "
-        "(scope='snapshot', action='list')",
+        "action='list', 'view', or 'diff'), listing snapshots "
+        "(scope='snapshot', action='list') and exporting settings "
+        "(scope='settings', action='export')",
     ),
     "ha_manage_app": ReadOnlyExemption(
         _addon_write,
@@ -321,6 +334,14 @@ READ_ONLY_EXEMPT_TOOLS: dict[str, ReadOnlyExemption] = {
     "ha_manage_security_policy": ReadOnlyExemption(
         _security_policy_write,
         "reading the policy document (action='get')",
+    ),
+    # The recorder's statistics listing and Core's issues with them exist
+    # only here.
+    "ha_manage_logs": ReadOnlyExemption(
+        _logs_write,
+        "listing the recorder's statistics (action='recorder/list_statistic_ids'), "
+        "reading Core's issues with them (action='recorder/validate_statistics') "
+        "and describing any action (describe=true)",
     ),
     # Blueprint listing and reading exist only here — ha_get_blueprint was
     # merged into this tool (issue #2329), so hiding it would remove the read

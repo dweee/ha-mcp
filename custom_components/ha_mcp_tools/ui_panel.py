@@ -76,13 +76,17 @@ _BOOT_URL = f"{_UI_BASE}/boot"
 _SESSION_URL = f"{_UI_BASE}/session"
 _APP_PREFIX = f"{_UI_BASE}/app/"
 _PROXY_URL = f"{_UI_BASE}/app/{{path:.*}}"
+_TRANSFER_EXPORTING = {
+    "api/settings/transfer/export": True,
+    "api/settings/transfer/import": False,
+}
 
 # Session cookie. HttpOnly so page JS can never read it; SameSite=Strict so it
 # rides only same-site requests (the iframe is same-origin with the frontend);
 # path-scoped to the proxy so it is never sent to the boot/session endpoints.
 _COOKIE_NAME = "ha_mcp_tools_ui_session"
 _COOKIE_PATH = f"{_UI_BASE}/app"
-# Keep in sync with ``ha_mcp.settings_ui._i18n.LOCALE_COOKIE`` without
+# Keep in sync with ``ha_mcp.settings_ui.i18n.LOCALE_COOKIE`` without
 # importing the separately installed server package into the HA component.
 _LOCALE_COOKIE_NAME = "ha_mcp_locale"
 
@@ -323,6 +327,12 @@ class _ProxyView(HomeAssistantView):
 
         if not await _session_user_is_admin(hass, request.cookies.get(_COOKIE_NAME)):
             return web.Response(status=401, text="Unauthorized")
+
+        exporting = _TRANSFER_EXPORTING.get(path)
+        if exporting is not None:
+            from .settings_transfer import async_handle
+
+            return await async_handle(hass, request, exporting=exporting)
 
         # Defense in depth: never let a crafted path escape the secret-path
         # prefix on the loopback server (the caller is already an admin, so this
@@ -752,16 +762,6 @@ _BOOT_HTML = f"""<!doctype html>
 </body>
 </html>
 """
-
-
-def render_boot_script() -> str:
-    """Return the boot-page script source (used by the JS-parse tests)."""
-    return _BOOT_JS
-
-
-def render_boot_page() -> str:
-    """Return the boot-page HTML (used by the tests)."""
-    return _BOOT_HTML
 
 
 def panel_config() -> ConfigType:
