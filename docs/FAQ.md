@@ -1061,14 +1061,20 @@ dimension. What it covers:
   with `domain: script` and that key as `service`, is concealed as not-found
   too. A script or automation body that calls `script.<storage key>`, a raw
   `trace/*` command or result naming the key, and an `ha_read_file` /
-  `ha_config_get_yaml` read of a file that defines a hidden item are refused.
-  A file defines one through a top-level key of `scripts.yaml`, an `id` in
-  `scenes.yaml` / `automations.yaml`, or a `script:` / `scene:` /
-  `automation:` section elsewhere (a package). The whole file is checked,
-  even when only a `tail_lines` or `yaml_path` slice is asked for. A helper
-  that merely shares a hidden script's key stays readable. Because keys and
-  ids now count, enforce mode can also refuse a read that only shares a
-  hidden entity's key or id.
+  `ha_config_get_yaml` read or `ha_write_file(edits=)` edit of a file that
+  defines a hidden item are refused. A file defines one when Home Assistant's
+  loader takes part of the item's definition from it: `scripts.yaml`,
+  `scenes.yaml` and `automations.yaml`, a package, or any file pulled in with
+  `!include` or `!include_dir_*`. The whole file counts, even when only a
+  `tail_lines` or `yaml_path` slice is asked for. A copy Home Assistant does
+  not load stays readable. A file that holds a single value, or no text at all
+  (only numbers, booleans or nulls), can stay readable too: `!include` names
+  the included value after the including file, and `!include_dir_merge_list`
+  keeps only each file's items. Core's log files and `secrets.yaml` are not
+  checked. If the configuration does not load, or the component cannot be
+  reached or lacks the check, these reads and edits are refused. Elsewhere,
+  because keys and ids now count, enforce mode can also refuse a read that
+  only shares a hidden entity's key or id.
   An automation's bare `identifier` is only ever read as its config `id`.
 
 What it deliberately **refuses** (their output cannot be text-scanned): sandbox
@@ -1085,9 +1091,13 @@ camera or image entity too (by denylist or area) when its output is sensitive.
 
 `ha_get_skill_guide` and `ha_search_tools` are always **exempt**: they return
 bundled docs and tool schemas, never Home Assistant data, and their examples can
-name an entity_id you have hidden. The same bundled text on a write tool's
-result (the best-practices guide and the checker's warnings) is exempt for
-the same reason. The developer-mode `ha_dev_*` tools are
+name an entity_id you have hidden. The best-practices text on a write tool's
+result or error (the bundled guide and the checker's warnings) is exempt too,
+because its fixed examples can name such an entity_id. One of the checker's
+warnings, on the order of keys in a `variables` block, also repeats key names
+from the config it checks: when the tool builds that config from what is stored
+(`python_transform`, `take_control_of_blueprint`), a key can name a hidden
+entity_id, and that warning returns it unscanned. The developer-mode `ha_dev_*` tools are
 exempt too: developer mode is a development and testing override that can
 change settings and replace the running server, and it may bypass entity
 visibility, so a stored security-policy rule naming a hidden entity_id is
