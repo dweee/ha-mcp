@@ -231,7 +231,7 @@ class Settings(BaseSettings):
         bool, Setting(surface="advanced", section="operations")
     ] = Field(False, alias="HAMCP_ENABLE_HISTORY_QUERY_GUARDRAILS")
 
-    # Opt-in: ask HACS / the Marketplace to refresh the component's repository
+    # Opt-in: ask the Marketplace to refresh the component's repository
     # at startup after a server update (hacs_auto_refresh). An install that ran
     # the refresh before it became opt-in has it turned on once, on its behalf.
     hacs_refresh_after_update: Annotated[
@@ -725,7 +725,7 @@ class Settings(BaseSettings):
 
     # Backup directory override. Empty ("") resolves at runtime to a
     # deployment-mode default: ``/data/ha_mcp_backups`` in the add-on,
-    # otherwise ``<data dir>/backups`` (see ``backup_manager._resolve_default_dir``).
+    # otherwise ``<data dir>/backups`` (see ``backup_manager.resolve_default_dir``).
     auto_backup_dir: Annotated[str, Setting(surface="backup")] = Field(
         "", alias="HAMCP_BACKUP_DIR"
     )
@@ -745,6 +745,11 @@ class Settings(BaseSettings):
     backup_read_only: Annotated[bool, Setting(surface="backup", app=_ALL_FLAVORS)] = (
         Field(False, alias="BACKUP_READ_ONLY")
     )
+    # Lets ha_manage_backup export and import the settings file, as the
+    # settings page's buttons do. Off until a person turns it on.
+    enable_settings_transfer_actions: Annotated[
+        bool, Setting(surface="backup", app=_ALL_FLAVORS)
+    ] = Field(False, alias="ENABLE_SETTINGS_TRANSFER_ACTIONS")
 
     # Snapshot-tarball deletion gate (#1861). Off by default: an agent
     # deleting a full HA snapshot is categorically riskier than the
@@ -910,4 +915,4 @@ class Settings(BaseSettings):
 
 def get_settings() -> Settings:
     """Get application settings."""
-    return Settings()  # type: ignore[call-arg]
+    return Settings()

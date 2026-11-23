@@ -202,11 +202,10 @@ class TestEntityCleaner:
     async def _cleanup_script(self, entity_id: str) -> bool:
         """Clean up a script entity."""
         try:
-            # Extract script ID from entity ID
-            script_id = entity_id.replace("script.", "")
-
+            # A bare id would delete only under that storage key, so a renamed
+            # script is removed by its entity_id.
             delete_result = await self.client.call_tool(
-                "ha_config_remove_script", {"script_id": script_id}
+                "ha_config_remove_script", {"script_id": entity_id}
             )
 
             delete_data = parse_mcp_result(delete_result)
@@ -347,7 +346,7 @@ async def _cleanup_domain_test_entities(
 
 async def cleanup_test_entities_by_name(
     mcp_client, name_patterns: list[str]
-) -> dict[str, int]:
+) -> dict[str, dict[str, int]]:
     """
     Clean up entities matching test name patterns.
 
@@ -371,7 +370,7 @@ async def cleanup_test_entities_by_name(
         "input_select",
         "input_text",
     ]
-    results = {}
+    results: dict[str, dict[str, int]] = {}
 
     for domain in domains_to_check:
         found_count, cleaned_count = await _cleanup_domain_test_entities(

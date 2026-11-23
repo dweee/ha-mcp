@@ -475,8 +475,8 @@
     "advanced.individual_fetch_batch_size.help": "Samtempaj agordakiroj po ID. Malaltigu al 1 ĉe seriilaj HA-serviloj.",
     "advanced.enable_history_query_guardrails.label": "Protektaj gvidlinioj por historikurioj",
     "advanced.enable_history_query_guardrails.help": "Malakcepti registrilajn kuriojn, kiuj superas konservativajn entajn kaj tempintervalajn buĝetojn. Malŝaltite defaŭlte.",
-    "advanced.hacs_refresh_after_update.label": "Refreŝigi la komponanton en HACS post ĝisdatigo",
-    "advanced.hacs_refresh_after_update.help": "Ĉe pravalorizo post servila ĝisdatigo, petu al HACS (la Marketplace ĉe Home Assistant 2026.11+) re-kontroli la HA-MCP-deponejon, por ke ĝia kongrua ĝisdatigo montriĝu tuj anstataŭ atendi la sekvan fonan kontrolon. Malŝaltita defaŭlte; instaloj kiuj jam faris tion tenas ĝin ŝaltita.",
+    "advanced.hacs_refresh_after_update.label": "Ĝisdatigi la komponanton en la Marketplace post ĝisdatigo",
+    "advanced.hacs_refresh_after_update.help": "Dum pravalorizado post servila ĝisdatigo, peti al Marketplace re-kontroli la HA-MCP-deponejon, por ke ĝia kongrua ĝisdatigo aperu tuj anstataŭ atendi la sekvan fonan kontrolon. Malŝaltita defaŭlte; instalaĵoj kiuj jam faris tion tenas ĝin ŝaltita.",
     "advanced.ha_tool_concurrency.label": "Konkureco de hejmaŭtomatigaj iloj de Home Assistant",
     "advanced.ha_tool_concurrency.help": "Laŭvola limo pri eksteraj Home Assistant ilvokoj tra ĉiuj seancoj. Interna REST, WebSocket, kaj samtempeco de disbranĉigo po ilo estas senŝanĝaj. 0 konservas senliman konduton. Voko atendanta kapaciton malsukcesas post 60 sekundoj.",
     "advanced.dashboard_screenshot_engine_url.label": "URL de panelo-ekrankopiga motoro",
@@ -514,7 +514,7 @@
     "advanced.code_mode_saved_tools_path.label": "Vojo de konservitaj iloj",
     "advanced.code_mode_saved_tools_path.help": "JSON-dosiero uzata por persisti proprajn ilojn tra restartigoj.",
     "advanced.extra_yaml_write_keys.label": "Ekstraj YAML-skribaj ŝlosiloj",
-    "advanced.extra_yaml_write_keys.help": "Kromaj ĉefnivelaj ŝlosiloj, kiujn ha_config_set_yaml povas skribi krom la enkonstruitaj, por YAML-unuaj integriĝoj en ĉi tiu instalo (ekz. alert2). Enigu unu ŝlosilon por ĉiu linio aŭ disigu ŝlosilojn per komoj. Ŝlosiloj, kiuj redefinas la propran fidlimon de Home Assistant, neniam povas esti aldoniĝaj kaj estas ignoritaj. Postulas la propran komponaĵon 1.2.4 aŭ pli novan.",
+    "advanced.extra_yaml_write_keys.help": "Kromaj ĉefnivelaj ŝlosiloj, kiujn ha_config_set_yaml rajtas skribi krom la enkonstruitaj, por YAML-unuarangaj integriĝoj en ĉi tiu instalo (ekz. alert2). Enigu unu ŝlosilon po linio aŭ disigu ŝlosilojn per komoj. Ŝlosiloj, kiuj redifinas la propran fidlimon de Home Assistant, neniam povas esti aldonitaj kaj estas ignorataj.",
     "advanced.redact_app_option_keys.label": "Pliaj aplikaĵopciaj ŝlosiloj por kaŝi",
     "advanced.redact_app_option_keys.help": "Nomoj de aplikaĵaj (aldonaĵaj) opcioj kaŝendaj kiel pasvortkampoj, por aplikaĵoj kies skemo konservas sekreton kiel plata teksto (ekzemple backup_password). Disigu nomojn per komoj aŭ novaj linioj. Nomo aplikiĝas al ĉiu aplikaĵo; skribu app_slug:name por limigi ĝin al unu aplikaĵo. Nomi opciogrupon kovras ĉiun opcion en ĝi. Uzata nur dum \"Redact Secrets\" estas ŝaltita. Malplena defaŭlte.",
     "advanced.sidecar_pin_port.label": "Flankveturila pordo de Agorda UI",
@@ -715,7 +715,7 @@
     },
     "ha_get_camera_image": {
       "title": "Akiri Kameran Bildon",
-      "description": "Akiri momentfotan bildon de kameraa ento en Home Assistant."
+      "description": "Preni momentfotan bildon de Home Assistant-kamerao aŭ bilda ento."
     },
     "ha_get_dashboard_screenshot": {
       "title": "Akiri Panelan Ekrankopion",
@@ -727,15 +727,11 @@
     },
     "ha_get_entity": {
       "title": "Akiri Enton",
-      "description": "Akiru entan registran informon por unu aŭ pluraj entoj."
-    },
-    "ha_get_entity_exposure": {
-      "title": "Akiri Entan Eksponon",
-      "description": "Akiru agordojn de enta ekspono - listigu ĉiujn aŭ akiru agordojn por specifa ento."
+      "description": "Akiri entajn registro-enirojn, aŭ sen ento la registragordojn kaj elmetitajn entojn."
     },
     "ha_get_hacs_info": {
-      "title": "Akiri HACS-Informon",
-      "description": "Akiru HACS (Home Assistant Community Store) datumojn — serĉu en la vendejo aŭ prenu deponejajn detalojn."
+      "title": "Akiri Marketplace-Informojn",
+      "description": "Akiri datumojn el la Marketplace de Home Assistant, kio HACS iĝis en 2026.11."
     },
     "ha_get_history": {
       "title": "Akiri Entan Historion aŭ Statistikojn",
@@ -762,8 +758,8 @@
       "description": "Akiru aktualan statuson, staton, kaj atributojn de unu aŭ pluraj entoj (lumoj, ŝaltiloj, sensiloj, klimato, kovriloj, seruroj, fa"
     },
     "ha_get_system_health": {
-      "title": "Akiri Sisteman Sanon (inkl. ZHA/Z-Wave/integriĝaj diagnozoj)",
-      "description": "Akiru sisteman sanon de Home Assistant, inkluzive de Zigbee (ZHA), Z-Wave JS, kaj diagnozaj elĵetaĵoj por integriĝoj."
+      "title": "Ricevi sistemsanon (inkl. retojn ZHA / Z-Wave / Thread / Matter)",
+      "description": "Ricevi la sistemsanon de Home Assistant, inkluzive de la retoj Zigbee (ZHA), Z-Wave JS, Thread kaj Matter."
     },
     "ha_get_todo": {
       "title": "Akiri Farendaĵon",
@@ -779,7 +775,7 @@
     },
     "ha_list_floors_areas": {
       "title": "Listigi Etaĝojn kaj Areojn",
-      "description": "Listigu etaĝojn ordigitajn laŭ nivelo kreskante, ĉiu kun siaj asignitaj areoj nestitaj, plus areoj sen etaĝo."
+      "description": "Listu etaĝojn en la ordo, kiel Home Assistant konservas ilin, ĉiu kun siaj asignitaj areoj ennestigitaj, kaj krome areojn sen etaĝo."
     },
     "ha_list_services": {
       "title": "Listigi Disponeblajn Servojn",
@@ -806,8 +802,12 @@
       "description": "Administri la preferojn de la Energio-Panelo de Home Assistant: reto / sunenergio /"
     },
     "ha_manage_hacs": {
-      "title": "Administri HACS",
-      "description": "Administri HACS (Home Assistant Komunuma Butiko) — instali/ĝisdatigi, forigi, aldoni proprajn deponejojn, aŭ aktualigi deponejon en"
+      "title": "Administri Marketplace",
+      "description": "Administri la Marketplace de Home Assistant (kio HACS iĝis en 2026.11): instali, ĝisdatigi, forigi kaj aldoni deponejojn."
+    },
+    "ha_manage_logs": {
+      "title": "Administri Registrilon, Statistikon kaj Logojn",
+      "description": "Administri la registrilon de Home Assistant, ĝiajn longperspektivajn statistikojn kaj ĝiajn logojn."
     },
     "ha_manage_pipeline": {
       "title": "Administri Asistan Dukton",
@@ -874,8 +874,8 @@
       "description": "Serĉi entojn (lumoj, sensiloj, ŝaltiloj, klimato, ktp.) laŭ nomo, domajno, aŭ areo — KAJ ene de aŭtomatigo/skripto/j"
     },
     "ha_set_area_or_floor": {
-      "title": "Krei aŭ Ĝisdatigi Areon aŭ Etaĝon",
-      "description": "Krei aŭ ĝisdatigi areon aŭ etaĝon de Home Assistant."
+      "title": "Krei, Ĝisdatigi aŭ Reordigi Areojn aŭ Etaĝojn",
+      "description": "Krei, ĝisdatigi aŭ reordigi areojn aŭ etaĝojn de Home Assistant."
     },
     "ha_set_device": {
       "title": "Agordi Aparaton",
@@ -883,7 +883,7 @@
     },
     "ha_set_entity": {
       "title": "Agordi Enton",
-      "description": "Ĝisdatigi entajn ecojn en la enta registro."
+      "description": "Ĝisdatigi entajn registro-enirojn, aŭ sen entity_id la tutregistragordojn."
     },
     "ha_set_integration": {
       "title": "Agordi Integriĝon",

@@ -8,9 +8,8 @@ from ha_mcp._vendor.fastmcp import Context
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
 
 from ...client.rest_client import NON_ADMIN_TOKEN_WARNING, HomeAssistantAPIError
-from ...errors import get_error_code, get_error_message
 from ..component_api import component_supports, get_component_caps
-from ..dashboard_read_errors import CONFIG_NOT_FOUND_CODE, NO_STORED_CONFIG_MESSAGES
+from ..dashboard_read_errors import no_stored_config
 from ..helpers import exception_to_structured_error, safe_progress
 from ..tools_config_dashboards import (
     _dashboards_via_component,
@@ -23,20 +22,20 @@ from ._config import (
     INDIVIDUAL_FETCH_BATCH_SIZE,
     SCRIPT_CONFIG_TIME_BUDGET,
 )
-from ._fetch import (
+from ._flow_helpers import FlowHelperSearchMixin
+from ._scenes import SceneSearchMixin
+from .fetch import (
     http_500_diagnosis_hint,
     is_timeout_error,
     record_first_failure,
 )
-from ._flow_helpers import FlowHelperSearchMixin
-from ._graph import (
+from .graph import (
     GraphResult,
     _graph_applies,
     _graph_partial_reasons,
     _merge_graph_hits,
     fetch_related_buckets,
 )
-from ._scenes import SceneSearchMixin
 
 logger = logging.getLogger(__name__)
 
@@ -55,40 +54,14 @@ async def _scrub_results_for_enforce(
     (single memoized config load) unless enforce mode is active. Lazy import so
     the visibility package is only touched at call time, not module import.
     """
-    from ...visibility.enforcement import active_hidden_regex, scrub_records
+    from ...visibility.enforcement import active_hidden_matcher, scrub_records
 
-    enforce_regex = await active_hidden_regex(client)
-    if enforce_regex is None:
+    enforce_matcher = await active_hidden_matcher(client, results)
+    if enforce_matcher is None:
         return
     for category, items in results.items():
         if items:
-            results[category] = scrub_records(items, enforce_regex)
-
-
-def _is_no_stored_config(resp: dict[str, Any]) -> bool:
-    """True when a failed ``lovelace/config`` envelope means the dashboard
-    has no stored config — an auto-generated dashboard that was never taken
-    control of — which is a clean no-match for a config scan rather than a
-    backend failure (issue #2008).
-
-    HA reports the ``config_not_found`` code for two distinct causes
-    (``homeassistant/components/lovelace/websocket.py``, ``_handle_errors``):
-    no stored config ("No config found.") and an unresolvable url_path
-    ("Unknown config specified: ..."), e.g. a dashboard deleted between the
-    registry-list snapshot and this fetch. Only the former is a clean skip,
-    so the message is matched too; the latter stays a counted failure.
-
-    ``send_websocket_message`` normalizes command failures to a flat envelope
-    (code top-level as ``error_code``, message as the ``error`` string); the
-    nested ``error.code``/``error.message`` shape is accepted defensively via
-    the canonical :func:`get_error_code` / :func:`get_error_message`
-    extractors, matching ``dashboard_screenshot/paths.py``'s detection of the
-    same HA error.
-    """
-    code = resp.get("error_code") or get_error_code(resp)
-    if code != CONFIG_NOT_FOUND_CODE:
-        return False
-    return get_error_message(resp) in NO_STORED_CONFIG_MESSAGES
+            results[category] = scrub_records(items, enforce_matcher)
 
 
 async def _phase_finished(
@@ -350,7 +323,7 @@ class DeepSearchMixin(SceneSearchMixin, FlowHelperSearchMixin):
                 (
                     results["dashboards"],
                     dashboard_failed,
-                ) = await self._search_dashboards_surface(
+                ) = await self.search_dashboards_surface(
                     query_lower,
                     exact_match,
                     semaphore,
@@ -499,10 +472,6 @@ class DeepSearchMixin(SceneSearchMixin, FlowHelperSearchMixin):
         configs: dict[str, dict[str, Any]] = {}
 
         # Attempt C: parallel per-id REST calls under a wall-clock budget
-        skipped_count = 0
-        failed_count = 0
-        yaml_skipped_count = 0
-        timeout_count = 0
         # One representative summary — ``record_first_failure`` (which holds
         # the guard) keeps the first ``failed``-class exception, upgrading
         # once to the first HTTP 500 so a fast-failing outlier can't suppress
@@ -518,7 +487,7 @@ class DeepSearchMixin(SceneSearchMixin, FlowHelperSearchMixin):
             try:
                 config = await asyncio.wait_for(
                     self.client._request("GET", f"/config/automation/config/{uid}"),
-                    timeout=INDIVIDUAL_CONFIG_TIMEOUT,
+                    timeout=self.config_timeout,
                 )
                 return (uid, config, None)
             except HomeAssistantAPIError as e:
@@ -543,7 +512,7 @@ class DeepSearchMixin(SceneSearchMixin, FlowHelperSearchMixin):
                 # timeout while still perfectly healthy (#1784).
                 logger.debug(
                     f"Automation individual config fetch ({uid}) timed "
-                    f"out after {INDIVIDUAL_CONFIG_TIMEOUT}s."
+                    f"out after {self.config_timeout}s."
                 )
                 return (uid, None, "timeout")
             except Exception as e:  # noqa: BLE001
@@ -628,24 +597,21 @@ class DeepSearchMixin(SceneSearchMixin, FlowHelperSearchMixin):
             e for e in all_entities if e.get("entity_id", "").startswith("script.")
         ]
 
+        storage_keys: dict[str, str] = {}
         # Phase 1: Score all scripts by name (instant)
         scored: list[tuple[str, str, str | None, int]] = []
         for entity in script_entities:
             entity_id = entity.get("entity_id", "")
             friendly_name = entity.get("attributes", {}).get("friendly_name", entity_id)
-            script_id = entity_id.replace("script.", "")
             name_score = self.fuzzy_searcher._calculate_entity_score(
                 entity_id, friendly_name, "script", query_lower
             )
-            scored.append((entity_id, friendly_name, script_id, name_score))
+            # Fetched by entity_id: a bare slug can be another script's key.
+            scored.append((entity_id, friendly_name, entity_id, name_score))
 
         configs: dict[str, dict[str, Any]] = {}
 
         # Attempt C: parallel individual fetch with budget (see #879)
-        skipped_count = 0
-        failed_count = 0
-        yaml_skipped_count = 0
-        timeout_count = 0
         # One representative summary — ``record_first_failure`` (which holds
         # the guard) keeps the first ``failed``-class exception, upgrading
         # once to the first HTTP 500 so a fast-failing outlier can't suppress
@@ -661,8 +627,9 @@ class DeepSearchMixin(SceneSearchMixin, FlowHelperSearchMixin):
             try:
                 config_resp = await asyncio.wait_for(
                     self.client.get_script_config(sid),
-                    timeout=INDIVIDUAL_CONFIG_TIMEOUT,
+                    timeout=self.config_timeout,
                 )
+                storage_keys[sid] = config_resp.get("script_id") or sid
                 return (sid, config_resp.get("config", {}), None)
             except HomeAssistantAPIError as e:
                 if e.status_code == 404:
@@ -683,7 +650,7 @@ class DeepSearchMixin(SceneSearchMixin, FlowHelperSearchMixin):
                 # batch concurrency, distinct from a real failure (#1784).
                 logger.debug(
                     f"Script individual config fetch ({sid}) timed out "
-                    f"after {INDIVIDUAL_CONFIG_TIMEOUT}s."
+                    f"after {self.config_timeout}s."
                 )
                 return (sid, None, "timeout")
             except Exception as e:  # noqa: BLE001
@@ -713,10 +680,7 @@ class DeepSearchMixin(SceneSearchMixin, FlowHelperSearchMixin):
             else SCRIPT_CONFIG_TIME_BUDGET,
             "Script",
             "scripts",
-            deprioritize={
-                entity_id.removeprefix("script.")
-                for entity_id in graph_entity_ids or ()
-            },
+            deprioritize=set(graph_entity_ids or ()),
         )
         configs.update(fetched_configs)
 
@@ -724,7 +688,7 @@ class DeepSearchMixin(SceneSearchMixin, FlowHelperSearchMixin):
         matches = [
             {
                 "entity_id": m["entity_id"],
-                "script_id": m["key"],
+                "script_id": storage_keys.get(m["key"], m["key"]),
                 "friendly_name": m["friendly_name"],
                 "score": m["score"],
                 "match_in_name": m["match_in_name"],
@@ -787,7 +751,7 @@ class DeepSearchMixin(SceneSearchMixin, FlowHelperSearchMixin):
             out[uid] = (entity_id, current_name)
         return out
 
-    async def _search_helper_type(
+    async def search_helper_type(
         self,
         helper_type: str,
         query_lower: str,
@@ -941,7 +905,7 @@ class DeepSearchMixin(SceneSearchMixin, FlowHelperSearchMixin):
         failed_type_count = 0
         type_results = await asyncio.gather(
             *[
-                self._search_helper_type(
+                self.search_helper_type(
                     ht,
                     query_lower,
                     exact_match,
@@ -981,7 +945,7 @@ class DeepSearchMixin(SceneSearchMixin, FlowHelperSearchMixin):
         failed_type_count += flow_failed_count
         return results, failed_type_count, unsearched
 
-    async def _search_dashboards_surface(
+    async def search_dashboards_surface(
         self,
         query_lower: str,
         exact_match: bool,
@@ -1020,7 +984,7 @@ class DeepSearchMixin(SceneSearchMixin, FlowHelperSearchMixin):
         load raised — surfaced as the same ``dashboard(s) not scanned``
         partial the legacy scan reports). A config-less auto-generated
         dashboard is skipped in-process (nothing to scan), consistent with
-        :func:`_is_no_stored_config`.
+        :func:`no_stored_config`.
 
         ``None`` ⇒ run the legacy per-dashboard walk instead: the component
         lacks the ``dashboards_doc_search`` capability (older components
@@ -1083,7 +1047,7 @@ class DeepSearchMixin(SceneSearchMixin, FlowHelperSearchMixin):
             }
         return list(records.values()), failed
 
-    async def _search_one_dashboard(
+    async def search_one_dashboard(
         self,
         url_path: str,
         title: str,
@@ -1101,7 +1065,7 @@ class DeepSearchMixin(SceneSearchMixin, FlowHelperSearchMixin):
         of a complete-looking empty result.
 
         The no-stored-config envelope (``config_not_found`` + "No config
-        found.", see :func:`_is_no_stored_config`) is the deliberate
+        found.", see :func:`no_stored_config`) is the deliberate
         exception: an auto-generated dashboard (strategy-backed, never taken
         control of) has nothing to scan, so it reads as a clean no-match.
         Counting it as failed made every dashboard search on a stock install
@@ -1116,7 +1080,7 @@ class DeepSearchMixin(SceneSearchMixin, FlowHelperSearchMixin):
                     get_data["url_path"] = url_path
                 resp = await asyncio.wait_for(
                     self.client.send_websocket_message(get_data),
-                    timeout=INDIVIDUAL_CONFIG_TIMEOUT,
+                    timeout=self.config_timeout,
                 )
                 # A soft failure does NOT raise: send_websocket_message returns
                 # {"success": False, "error": ...} on a 403-after-retries or a
@@ -1128,7 +1092,7 @@ class DeepSearchMixin(SceneSearchMixin, FlowHelperSearchMixin):
                 # shape explicitly (``success is False``) so a missing-success
                 # raw response still falls through to the ``result`` fallback.
                 if isinstance(resp, dict) and resp.get("success") is False:
-                    if _is_no_stored_config(resp):
+                    if no_stored_config(resp):
                         logger.debug(
                             f"Dashboard has no stored config ({url_path}); "
                             "auto-generated — nothing to scan"
@@ -1202,7 +1166,7 @@ class DeepSearchMixin(SceneSearchMixin, FlowHelperSearchMixin):
 
             dash_results = await asyncio.gather(
                 *[
-                    self._search_one_dashboard(
+                    self.search_one_dashboard(
                         url_path, title, query_lower, exact_match, semaphore
                     )
                     for url_path, title in dashboards_to_search

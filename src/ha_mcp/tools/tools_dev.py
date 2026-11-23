@@ -11,7 +11,6 @@ Feature Flag: Set HAMCP_ENABLE_DEV_MODE=true to enable these tools.
 """
 
 import asyncio
-import json
 import logging
 import sys
 from typing import Annotated, Any, Literal
@@ -42,6 +41,12 @@ from .component_api import (
 from .config_entry_flow import COMPONENT_DOMAIN
 from .config_entry_flow_form import MISSING, shown_value
 from .config_entry_flow_introspect import abort_probe_flow
+from .dev_settings_files import REMOVE as _REMOVE
+from .dev_settings_files import (
+    export_settings_file,
+    import_settings_file,
+    merge_feature_overrides,
+)
 from .helpers import (
     exception_to_structured_error,
     log_tool_usage,
@@ -77,15 +82,13 @@ _OPT_PIP_SPEC = "pip_spec"
 # before the serving thread is torn down. Mirrors
 # settings_ui._supervisor._SUPERVISOR_SELF_RESTART_FLUSH_DELAY_S, with more headroom
 # because the embedded response may traverse the HA ingress/webhook hop.
-_SELF_ACTION_FLUSH_DELAY_S = 1.0
+SELF_ACTION_FLUSH_DELAY_S = 1.0
 
 # Strong references to in-flight fire-and-forget tasks so the event
 # loop's weakref-only task table can't garbage-collect them mid-run.
 # Same pattern as settings_ui._supervisor._BACKGROUND_RESTART_TASKS.
 _BACKGROUND_TASKS: set[asyncio.Task[None]] = set()
 
-# Sentinel marking a key for removal in _merge_file_override (reset action).
-_REMOVE = object()
 
 # Sentinel returned by the per-type ``_coerce_*_setting`` helpers when ``raw``
 # is not coercible to that type — the caller then raises the generic
@@ -497,7 +500,7 @@ def schedule_deferred_entry_reload(client: Any, entry_id: str) -> None:
     """
 
     async def _reload() -> None:
-        await asyncio.sleep(_SELF_ACTION_FLUSH_DELAY_S)
+        await asyncio.sleep(SELF_ACTION_FLUSH_DELAY_S)
         try:
             await client.call_service(
                 "homeassistant", "reload_config_entry", {"entry_id": entry_id}
@@ -560,10 +563,10 @@ class DevTools:
     def _settings_rows(self) -> list[dict[str, Any]]:
         """Build the full settings matrix from both registries."""
         from ..config import (
-            _ADVANCED_SETTINGS_BOUNDS,
             _ADVANCED_SETTINGS_CHOICES,
             _ADVANCED_SETTINGS_SENTINELS,
             _FEATURE_FLAG_INT_BOUNDS,
+            ADVANCED_SETTINGS_BOUNDS,
             ADVANCED_SETTINGS_FIELDS,
             FEATURE_FLAG_FIELDS,
             OAUTH_MODE_TOKEN,
@@ -615,7 +618,7 @@ class DevTools:
                 "origin": origin,
                 "editable": registry_editable and origin != "env",
             }
-            bounds = _ADVANCED_SETTINGS_BOUNDS.get(fname)
+            bounds = ADVANCED_SETTINGS_BOUNDS.get(fname)
             if bounds is not None:
                 row["min"], row["max"] = bounds
                 sentinel = _ADVANCED_SETTINGS_SENTINELS.get(fname)
@@ -711,65 +714,6 @@ class DevTools:
             return raw
         return _COERCE_MISS
 
-    @staticmethod
-    async def _merge_file_override(changes: dict[str, Any]) -> None:
-        """Read-merge-write ``changes`` into the shared override file.
-
-        Uses the settings UI's override-file lock and atomic-write
-        helper so a concurrent web-UI save can't interleave and
-        clobber this write (or vice versa). Refuses to overwrite an
-        unreadable or corrupt existing file — same data-loss guard as
-        the web UI save handlers.
-        """
-        from ..config import _FEATURE_FLAG_OVERRIDE_FILENAME
-        from ..settings_ui._persistence import (
-            _atomic_write_json,
-            _get_override_file_lock,
-        )
-        from ..utils.data_paths import get_data_dir
-
-        path = get_data_dir() / _FEATURE_FLAG_OVERRIDE_FILENAME
-        async with _get_override_file_lock():
-            existing: dict[str, Any] = {}
-            try:
-                # Executor thread: file I/O must not block the event loop.
-                existing_raw = await asyncio.to_thread(path.read_text)
-            except FileNotFoundError:
-                existing_raw = None
-            except OSError as exc:
-                raise_tool_error(
-                    create_error_response(
-                        ErrorCode.INTERNAL_ERROR,
-                        f"Could not read existing override file "
-                        f"({type(exc).__name__}: {exc}); refusing to "
-                        "overwrite to preserve prior settings.",
-                        suggestions=["Check filesystem permissions and retry"],
-                    )
-                )
-            if existing_raw is not None:
-                try:
-                    parsed = json.loads(existing_raw)
-                except json.JSONDecodeError as exc:
-                    raise_tool_error(
-                        create_error_response(
-                            ErrorCode.CONFIG_INVALID,
-                            f"Existing override file at {path} is not valid "
-                            f"JSON ({exc}); refusing to overwrite to preserve "
-                            "prior settings.",
-                            suggestions=[
-                                "Inspect or delete the file manually and retry"
-                            ],
-                        )
-                    )
-                if isinstance(parsed, dict):
-                    existing = parsed
-            for key, val in changes.items():
-                if val is _REMOVE:
-                    existing.pop(key, None)
-                else:
-                    existing[key] = val
-            await asyncio.to_thread(_atomic_write_json, path, existing)
-
     # ----- server-entry helpers -----
 
     async def _delayed_submit_options(
@@ -783,7 +727,7 @@ class DevTools:
         after our JSON response has flushed. Failures can only be
         logged — there is no caller left to answer.
         """
-        await asyncio.sleep(_SELF_ACTION_FLUSH_DELAY_S)
+        await asyncio.sleep(SELF_ACTION_FLUSH_DELAY_S)
         try:
             result = await self._client.submit_options_flow_step(flow_id, user_input)
             if result.get("type") == "create_entry":
@@ -825,13 +769,16 @@ class DevTools:
                 "set_policy",
                 "get_backup_config",
                 "set_backup_config",
+                "export_settings",
+                "import_settings",
             ],
             Field(
                 description=(
                     "Server-settings matrix: list / set / reset. Tools tab: "
                     "list_tools / set_tool (enable-disable-pin, LLM-API, security "
                     "gate). Security policies: get_policy / set_policy. Auto-backup "
-                    "config: get_backup_config / set_backup_config."
+                    "config: get_backup_config / set_backup_config. The settings "
+                    "page's whole-file transfer: export_settings / import_settings."
                 )
             ),
         ],
@@ -918,6 +865,17 @@ class DevTools:
                 ),
             ),
         ] = None,
+        settings_file: Annotated[
+            dict[str, Any] | None,
+            JSON_STRING_COERCION,
+            Field(
+                default=None,
+                description=(
+                    "import_settings: the settings_file from another server's "
+                    "export_settings, or a settings page's downloaded JSON"
+                ),
+            ),
+        ] = None,
     ) -> dict[str, Any]:
         """Manage ha-mcp server settings and the Tools/Policies/Backups surfaces (developer mode).
 
@@ -929,6 +887,11 @@ class DevTools:
 
         When NOT to use: for HA entity/automation configuration use the
         ha_config_* tools.
+
+        export_settings / import_settings move tool states, security
+        policies, entity visibility, feature, server and backup settings, and
+        the File & YAML Tools permissions between HA-MCP installations; the
+        HA-MCP Server entry's connection moves only through its sidebar panel.
 
         Caveats: enable/disable/pin and most server settings take effect
         only after a restart (ha_dev_manage_server action="restart");
@@ -949,6 +912,8 @@ class DevTools:
         ha_dev_manage_settings("set_tool", tool="ha_call_service", gated=True)
         ha_dev_manage_settings("get_policy")
         ha_dev_manage_settings("set_backup_config", backup={"enable_auto_backup": False})
+        ha_dev_manage_settings("export_settings")  # then, on the other server:
+        ha_dev_manage_settings("import_settings", settings_file=<its settings_file>)
         """
         try:
             if action in ("list", "set", "reset"):
@@ -963,6 +928,8 @@ class DevTools:
                 return await self._apply_set_policy(policy, expected_version)
             if action == "get_backup_config":
                 return await self._get_backup_config()
+            if action in ("export_settings", "import_settings"):
+                return await self._transfer_settings(action, settings_file)
             return await self._apply_set_backup_config(backup)
         except ToolError:
             raise
@@ -973,6 +940,13 @@ class DevTools:
                 suggestions=["Check server logs for details"],
             )
             return None  # unreachable; explicit for CodeQL
+
+    async def _transfer_settings(
+        self, action: str, settings_file: dict[str, Any] | None
+    ) -> dict[str, Any]:
+        if action == "export_settings":
+            return await export_settings_file(self._server)
+        return await import_settings_file(self._server, settings_file)
 
     async def _manage_server_setting(
         self,
@@ -1012,10 +986,10 @@ class DevTools:
         _guard_security_policy_setting(setting)
 
         from ..config import (
-            _ADVANCED_SETTINGS_BOUNDS,
             _ADVANCED_SETTINGS_CHOICES,
             _ADVANCED_SETTINGS_SENTINELS,
             _FEATURE_FLAG_INT_BOUNDS,
+            ADVANCED_SETTINGS_BOUNDS,
             ADVANCED_SETTINGS_FIELDS,
             FEATURE_FLAG_FIELDS,
             _read_feature_flag_override_file,
@@ -1039,7 +1013,7 @@ class DevTools:
             overrides = await asyncio.to_thread(_read_feature_flag_override_file)
             origin = self._advanced_origin(setting, env_name, overrides)
             editable = registry_editable and origin != "env"
-            bounds = _ADVANCED_SETTINGS_BOUNDS.get(setting)
+            bounds = ADVANCED_SETTINGS_BOUNDS.get(setting)
             sentinel = _ADVANCED_SETTINGS_SENTINELS.get(setting)
             choices = _ADVANCED_SETTINGS_CHOICES.get(setting)
         else:
@@ -1645,7 +1619,7 @@ class DevTools:
             )
         had_override = origin == "file"
         if had_override:
-            await self._merge_file_override({setting: _REMOVE})
+            await merge_feature_overrides({setting: _REMOVE})
             reset_global_settings()
         return {
             "success": True,
@@ -1753,7 +1727,7 @@ class DevTools:
                 )
             mode = "addon"
         else:
-            await self._merge_file_override({setting: coerced})
+            await merge_feature_overrides({setting: coerced})
             reset_global_settings()
             mode = "file"
         return {
@@ -1825,7 +1799,7 @@ class DevTools:
         """Manage the running ha-mcp server itself (developer mode).
 
         When NOT to use: to restart Home Assistant use ha_restart; to
-        update Home Assistant Apps (add-ons) or HACS packages use
+        update Home Assistant Apps (add-ons) or Marketplace repositories use
         ha_manage_app / ha_manage_hacs.
 
         Caveats: update_source changes ONLY the ha_mcp_tools custom
